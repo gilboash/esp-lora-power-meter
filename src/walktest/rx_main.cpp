@@ -19,6 +19,26 @@ static bool haveLastSeq = false;
 static float rssiMin = 0, rssiMax = -200, rssiSum = 0;
 static uint32_t lastReportMs = 0;
 
+// The gateway is mains powered and unattended behind the router, so it must
+// never end up in a state only a human with a USB cable can clear. A failed
+// radio init is usually a B2B connector that has worked loose; re-seating it
+// should bring the node back on its own rather than needing a power cycle.
+static bool radioUp = false;
+static uint32_t lastRadioTry = 0;
+static const uint32_t RADIO_RETRY_MS = 5000;
+
+// Re-arm the radio for reception. Shared by first bring-up and recovery.
+static bool radioArm() {
+    if (loraBegin() != RADIOLIB_ERR_NONE) return false;
+    pinMode(LORA_DIO1, INPUT);
+    int16_t state = radio.startReceive();
+    if (state != RADIOLIB_ERR_NONE) {
+        Serial.printf("[radio] startReceive failed: %d (%s)\n", state, loraErrName(state));
+        return false;
+    }
+    return true;
+}
+
 // Polled rather than interrupt-driven; see the note in tx_main.cpp for why
 // attachInterrupt() panics the ipc1 task on this platform.
 static inline bool packetReady() {
@@ -45,24 +65,28 @@ void setup() {
 
     Serial.println("\n=== LoRa walk test :: gateway node (RX) ===");
 
-    if (loraBegin() != RADIOLIB_ERR_NONE) {
-        Serial.println("[fatal] radio init failed; halting. Check board_pins.h against your module.");
-        while (true) { blink(60); delay(400); }
-    }
-
-    pinMode(LORA_DIO1, INPUT);
-    int16_t state = radio.startReceive();
-    if (state != RADIOLIB_ERR_NONE) {
-        Serial.printf("[fatal] startReceive failed: %d (%s)\n", state, loraErrName(state));
-        while (true) { blink(60); delay(400); }
-    }
-
-    Serial.println("listening...");
+    radioUp = radioArm();
+    if (radioUp) Serial.println("listening...");
+    else Serial.println("[warn] radio not ready; retrying every 5 s");
     Serial.println("seq,rssi,snr,freq_err,vbat_mv,rx_ok,missed,pdr%");
     lastReportMs = millis();
 }
 
 void loop() {
+    // Radio down: keep trying rather than halting. Recovery is logged so a
+    // flapping connector is visible in the record instead of silent.
+    if (!radioUp) {
+        if (millis() - lastRadioTry >= RADIO_RETRY_MS) {
+            lastRadioTry = millis();
+            radioUp = radioArm();
+            if (radioUp) Serial.println("[radio] recovered, listening...");
+            else Serial.println("[radio] still unreachable (check the module is seated)");
+        }
+        blink(30);
+        delay(200);
+        return;
+    }
+
     if (packetReady()) {
         // Two message types share the air: walk-test pings and meter readings.
         // Read into a buffer big enough for either and dispatch on the magic byte.
@@ -141,6 +165,13 @@ void loop() {
         } else if (state != RADIOLIB_ERR_NONE) {
             badFrames++;
             Serial.printf("[warn] rx error %d (%s)\n", state, loraErrName(state));
+            if (state == RADIOLIB_ERR_CHIP_NOT_FOUND ||
+                state == RADIOLIB_ERR_SPI_CMD_TIMEOUT) {
+                // The module has gone away mid-run; fall back to the retry loop.
+                radioUp = false;
+                lastRadioTry = millis();
+                Serial.println("[radio] lost the module, entering recovery");
+            }
         } else {
             badFrames++;
             Serial.printf("[warn] unknown frame: magic=0x%02X ver=%u rssi=%.1f\n",

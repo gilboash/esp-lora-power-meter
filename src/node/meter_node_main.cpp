@@ -44,6 +44,7 @@ static bool previewEnabled = false;
 // PREVIEW 2 sends the binarised ROI instead of the frame, which is the only
 // way to see why a decode failed without guessing.
 static bool previewBinary = false;
+static bool radioUp = false;
 
 static void pollCommandLines();
 
@@ -347,8 +348,9 @@ void setup() {
     // every ROI drawn against it share one coordinate system.
     cameraSetOrientation(CFG.flip, CFG.mirror);
 
-    if (loraBegin() != RADIOLIB_ERR_NONE) {
-        Serial.println("[warn] radio init failed");
+    radioUp = (loraBegin() == RADIOLIB_ERR_NONE);
+    if (!radioUp) {
+        Serial.println("[warn] radio init failed; will retry while running");
     } else {
         pinMode(LORA_DIO1, INPUT);
         ackTimeoutMs = loraTimeOnAirMs(sizeof(AckPacket)) + ACK_TURNAROUND_MS + 400;
@@ -502,8 +504,22 @@ void loop() {
         else Serial.println("[err] capture failed");
     }
 
+    // Same reasoning as the gateway: a node that gives up on its radio for good
+    // is indistinguishable from a flat battery once it is installed.
+    static uint32_t lastRadioTry = 0;
+    if (!radioUp && now - lastRadioTry >= 5000) {
+        lastRadioTry = now;
+        radioUp = (loraBegin() == RADIOLIB_ERR_NONE);
+        if (radioUp) {
+            pinMode(LORA_DIO1, INPUT);
+            ackTimeoutMs = loraTimeOnAirMs(sizeof(AckPacket)) + ACK_TURNAROUND_MS + 400;
+            if (ackTimeoutMs < ACK_TIMEOUT_MS) ackTimeoutMs = ACK_TIMEOUT_MS;
+            Serial.println("[radio] recovered");
+        }
+    }
+
     static uint32_t lastTx = 0;
-    if (now - lastTx >= (uint32_t)CFG.wake_secs * 1000) {
+    if (radioUp && now - lastTx >= (uint32_t)CFG.wake_secs * 1000) {
         lastTx = now;
         OcrResult r = lastResult;
         if (!previewing) {

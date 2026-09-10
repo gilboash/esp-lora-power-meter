@@ -65,6 +65,10 @@ class State:
         self.frame_times = deque(maxlen=30)
         self.frame_count = 0
         self.serials = {}        # role -> (serial, write-lock), for sending commands
+        # Uploading firmware needs exclusive access to the port, and this server
+        # holds it. Rather than stopping the server for every flash (and then
+        # forgetting to restart it), readers release their ports while paused.
+        self.pause_until = 0.0
         self.ocr = None          # newest local decode, from the node over USB
         self.cfg = None          # node's persisted ROI / interval settings
         self.diag = None         # [roi] contrast/threshold/trim from the decoder
@@ -167,6 +171,9 @@ def reader(port):
     than mistaken for text.
     """
     while True:
+        if time.time() < STATE.pause_until:
+            time.sleep(0.5)
+            continue
         try:
             ser = serial.Serial(port, BAUD, timeout=0.4)
         except Exception:
@@ -204,6 +211,8 @@ def reader(port):
 
         try:
             while True:
+                if time.time() < STATE.pause_until:
+                    break          # release the port so an upload can proceed
                 chunk = ser.read(8192)
                 if chunk:
                     buf += chunk
@@ -479,6 +488,21 @@ class Handler(BaseHTTPRequestHandler):
             cmd = str(payload.get("cmd", "")).strip()[:64]
             ok = STATE.send(cmd) if cmd else False
             self._send(200, json.dumps({"ok": ok}))
+        elif self.path.startswith("/api/pause"):
+            n = int(self.headers.get("Content-Length", "0"))
+            try:
+                payload = json.loads(self.rfile.read(n) or b"{}")
+            except ValueError:
+                payload = {}
+            secs = max(1, min(300, int(payload.get("seconds", 90))))
+            with STATE.lock:
+                STATE.pause_until = time.time() + secs
+                STATE.serials.pop("camera", None)
+            self._send(200, json.dumps({"ok": True, "paused_for": secs}))
+        elif self.path.startswith("/api/resume"):
+            with STATE.lock:
+                STATE.pause_until = 0.0
+            self._send(200, json.dumps({"ok": True}))
         elif self.path.startswith("/api/reset"):
             with STATE.lock:
                 STATE.packets.clear()
