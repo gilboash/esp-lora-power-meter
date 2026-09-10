@@ -16,6 +16,9 @@ struct MeterConfig {
                             // 1 = deep sleep between wakes (battery deployment)
     uint8_t  flip;          // sensor vertical flip
     uint8_t  mirror;        // sensor horizontal mirror
+    uint16_t ap_minutes;    // raise the WiFi viewfinder at boot for this many
+                            // minutes; 0 = off. Persisted, because at the meter
+                            // there is no USB to enable it from.
     uint16_t rotate;        // 0/90/180/270, applied to the PIXELS before crop
                             // and OCR -- a CSS-only rotation would leave the
                             // decoder slicing digit cells across the digit row

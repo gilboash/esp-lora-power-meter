@@ -20,6 +20,7 @@ static const MeterConfig DEFAULTS = {
     // The OV3660 on this board delivers a horizontally mirrored image, so the
     // corrective default is mirror on rather than off.
     /*mirror*/ 1,
+    /*ap_minutes*/ 0,
     /*rotate*/ 0,
 };
 
@@ -40,6 +41,7 @@ void meterConfigLoad() {
     CFG.flip      = prefs.getUChar("fl", DEFAULTS.flip);
     CFG.mirror    = prefs.getUChar("mi", DEFAULTS.mirror);
     CFG.rotate    = prefs.getUShort("ro", DEFAULTS.rotate);
+    CFG.ap_minutes = prefs.getUShort("ap", DEFAULTS.ap_minutes);
     prefs.end();
 }
 
@@ -59,13 +61,14 @@ void meterConfigSave() {
     prefs.putUChar("fl", CFG.flip);
     prefs.putUChar("mi", CFG.mirror);
     prefs.putUShort("ro", CFG.rotate);
+    prefs.putUShort("ap", CFG.ap_minutes);
     prefs.end();
 }
 
 void meterConfigPrint() {
-    Serial.printf("[cfg] roi=%u,%u,%ux%u digits=%u wake=%us thr=%u inv=%u lamp=%ums hb=%u sleep=%u flip=%u mirror=%u rot=%u\n",
+    Serial.printf("[cfg] roi=%u,%u,%ux%u digits=%u wake=%us thr=%u inv=%u lamp=%ums hb=%u sleep=%u flip=%u mirror=%u rot=%u ap=%u\n",
                   CFG.roi_x, CFG.roi_y, CFG.roi_w, CFG.roi_h, CFG.digits,
-                  CFG.wake_secs, CFG.threshold, CFG.invert, CFG.lamp_ms, CFG.heartbeat, CFG.sleep_en, CFG.flip, CFG.mirror, CFG.rotate);
+                  CFG.wake_secs, CFG.threshold, CFG.invert, CFG.lamp_ms, CFG.heartbeat, CFG.sleep_en, CFG.flip, CFG.mirror, CFG.rotate, CFG.ap_minutes);
 }
 
 bool meterConfigCommand(const String &line) {
@@ -88,6 +91,7 @@ bool meterConfigCommand(const String &line) {
     else if (key == "sleep")  CFG.sleep_en = v ? 1 : 0;
     else if (key == "flip")   CFG.flip = v ? 1 : 0;
     else if (key == "mirror") CFG.mirror = v ? 1 : 0;
+    else if (key == "ap")     CFG.ap_minutes = constrain(v, 0, 720);
     else if (key == "rotate") {
         long r = ((v % 360) + 360) % 360;
         CFG.rotate = (r == 90 || r == 180 || r == 270) ? (uint16_t)r : 0;

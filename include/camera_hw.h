@@ -24,6 +24,11 @@ bool cameraIsOpen();              // true between cameraBegin*/cameraEnd
 // Encode an 8-bit grayscale buffer and emit it using the same >>>FRAME format,
 // so the dashboard renders measurement frames through the existing path.
 void cameraSendGrayPreview(const uint8_t *gray, int w, int h, int quality);
+
+// Encode a grayscale buffer to JPEG. Caller frees *out with free().
+// Split out from the USB path so the same frame can be served over WiFi.
+bool cameraEncodeGray(const uint8_t *gray, int w, int h, int quality,
+                      uint8_t **out, size_t *outLen);
 const char *cameraSensorName();   // e.g. "OV3660", resolved from the sensor PID
 uint16_t cameraSensorPid();
 

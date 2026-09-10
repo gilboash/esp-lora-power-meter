@@ -45,7 +45,7 @@ ROW_RE = re.compile(r"^\d+(,[-\d.]*)+$")
 FRAME_RE = re.compile(r"^>>>FRAME (\d+) (\d+) (\d+) (\d+)$")
 OCR_RE = re.compile(r"^\[ocr\] value=(\d+) ok=(\d) conf=(\d+) thr=(\d+) segs=(\S*)$")
 CFG_RE = re.compile(r"^\[cfg\] roi=(\d+),(\d+),(\d+)x(\d+) digits=(\d+) wake=(\d+)s "
-                    r"thr=(\d+) inv=(\d+) lamp=(\d+)ms(?: hb=(\d+))?(?: sleep=(\d+))?(?: flip=(\d+))?(?: mirror=(\d+))?(?: rot=(\d+))?$")
+                    r"thr=(\d+) inv=(\d+) lamp=(\d+)ms(?: hb=(\d+))?(?: sleep=(\d+))?(?: flip=(\d+))?(?: mirror=(\d+))?(?: rot=(\d+))?(?: ap=(\d+))?$")
 # Emitted by the gateway when a decoded meter reading arrives over LoRa.
 ROI_RE = re.compile(r"^\[roi\] min=(\d+) mean=(\d+) max=(\d+) contrast=(\d+) thr=(\d+) "
                     r"trim=(\d+),(\d+) (\d+)x(\d+)(?: edge=(\d+))?$")
@@ -296,6 +296,7 @@ def reader(port):
                                 "flip": (g[11] if len(g) > 11 else 0),
                                 "mirror": (g[12] if len(g) > 12 else 0),
                                 "rotate": (g[13] if len(g) > 13 else 0),
+                                "ap": (g[14] if len(g) > 14 else 0),
                             }
                         role = "camera"
                         note_role(role)

@@ -142,11 +142,16 @@ void cameraEnd() {
     pinMode(XCLK_GPIO_NUM, INPUT);   // stop driving the 20 MHz clock
 }
 
+bool cameraEncodeGray(const uint8_t *gray, int w, int h, int quality,
+                      uint8_t **out, size_t *outLen) {
+    return fmt2jpg((uint8_t *)gray, (size_t)w * h, w, h, PIXFORMAT_GRAYSCALE,
+                   quality, out, outLen);
+}
+
 void cameraSendGrayPreview(const uint8_t *gray, int w, int h, int quality) {
     uint8_t *jpg = nullptr;
     size_t jpgLen = 0;
-    if (!fmt2jpg((uint8_t *)gray, (size_t)w * h, w, h, PIXFORMAT_GRAYSCALE,
-                 quality, &jpg, &jpgLen)) {
+    if (!cameraEncodeGray(gray, w, h, quality, &jpg, &jpgLen)) {
         Serial.println("[cam] preview encode failed");
         return;
     }

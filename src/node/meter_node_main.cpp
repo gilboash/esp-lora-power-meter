@@ -25,6 +25,7 @@
 #include "camera_hw.h"
 #include "meter_config.h"
 #include "meter_ocr.h"
+#include "ap_view.h"
 
 // Survives deep sleep (but not a power cut -- config lives in NVS instead).
 RTC_DATA_ATTR static uint32_t bootCount = 0;
@@ -47,6 +48,7 @@ static bool previewBinary = false;
 static bool radioUp = false;
 
 static void pollCommandLines();
+static void handleCommandLine(const String &line);
 
 // ACK_TIMEOUT_MS is a sane floor at SF7-SF9, but an 8-byte ACK at SF12 needs
 // ~990 ms of airtime on its own -- longer than the 800 ms constant. Waiting too
@@ -185,7 +187,8 @@ static bool cropRoi(const uint8_t *src, int sw, int sh,
 // well over a second, so frames arrive slower than the dashboard's liveness
 // window and the video visibly flickers as the stream tears down and reconnects.
 // While previewing we therefore init once and hold it.
-static bool measure(OcrResult *out, bool sendPreview, bool keepOpen) {
+static bool measure(OcrResult *out, bool sendPreview, bool keepOpen,
+                    bool usbPreview = true) {
     digitalWrite(LAMP_PIN, LAMP_ON);
     delay(CFG.lamp_ms);                  // let the LED and AGC settle
 
@@ -228,7 +231,30 @@ static bool measure(OcrResult *out, bool sendPreview, bool keepOpen) {
                     cameraSendGrayPreview(roi, rw, rh, 16);
                 } else {
                     drawRoiOverlay(frame, fw, fh);
-                    cameraSendGrayPreview(frame, fw, fh, 12);
+                    if (apViewActive()) {
+                        // Same overlaid frame the USB preview shows, so the ROI
+                        // you see on the phone is the one being decoded.
+                        uint8_t *jpg = nullptr;
+                        size_t jlen = 0;
+                        if (cameraEncodeGray(frame, fw, fh, 14, &jpg, &jlen)) {
+                            char st[96];
+                            snprintf(st, sizeof(st),
+                                     "%s  conf %u  thr %u  edge %u%%",
+                                     out->ok ? "reading" : "no decode",
+                                     out->confidence, out->threshold_used,
+                                     out->border_ink);
+                            // Overwrite the placeholder with the decoded digits.
+                            char digits[16] = {0};
+                            for (uint8_t i = 0; i < out->digits && i < 12; i++)
+                                digits[i] = out->cell[i].value >= 0
+                                          ? char('0' + out->cell[i].value) : '?';
+                            char full[96];
+                            snprintf(full, sizeof(full), "%s\n%s", digits, st);
+                            apViewPublish(jpg, jlen, full);
+                            free(jpg);
+                        }
+                    }
+                    if (usbPreview) cameraSendGrayPreview(frame, fw, fh, 12);
                 }
             }
         }
@@ -343,7 +369,17 @@ void setup() {
     Serial.printf("[cam] PSRAM %s, %u bytes free\n",
                   psramFound() ? "ok" : "MISSING", (unsigned)ESP.getFreePsram());
     meterConfigPrint();
-    Serial.println("Commands: SET <key> <n> | PREVIEW 0|1 | SEND");
+    Serial.println("Commands: SET <key> <n> | PREVIEW 0|1|2 | SEND | AP <minutes>|0");
+    apViewSetCommandHandler(handleCommandLine);
+
+    // Bring the viewfinder up on its own when configured. Without this the AP
+    // is unreachable in the field: enabling it needs a command, and at the
+    // meter there is no USB to send one from.
+    if (CFG.ap_minutes) {
+        Serial.printf("[ap] auto-start for %u min (SET ap 0 to disable)\n",
+                      CFG.ap_minutes);
+        apViewBegin(CFG.ap_minutes);
+    }
     // Restore orientation before the first capture, so the very first frame and
     // every ROI drawn against it share one coordinate system.
     cameraSetOrientation(CFG.flip, CFG.mirror);
@@ -450,12 +486,13 @@ static void transmitIfDue(const OcrResult &r) {
     }
 }
 
-static void pollCommandLines() {
-    static String line;
-    while (Serial.available()) {
-        char ch = (char)Serial.read();
-        if (ch == '\n' || ch == '\r') {
-            if (line.length()) {
+// One implementation, two callers: the USB console and the phone over the AP.
+// Splitting them would let the two drift, and the phone is the one that will be
+// used at the meter where mistakes are expensive to discover.
+static void handleCommandLine(const String &line) {
+    {
+        {
+            {
                 if (line == "SEND") {
                     OcrResult r = {};
                     if (measure(&r, previewEnabled, previewEnabled)) { reportOcr(r); transmitIfDue(r); }
@@ -466,6 +503,10 @@ static void pollCommandLines() {
                     meterConfigSave();
                     cameraSetOrientation(CFG.flip, CFG.mirror);
                     meterConfigPrint();
+                } else if (line.startsWith("AP ")) {
+                    int mins = line.substring(3).toInt();
+                    if (mins > 0) apViewBegin((uint16_t)mins);
+                    else          apViewEnd();
                 } else if (line.startsWith("PREVIEW ")) {
                     int mode = line.substring(8).toInt();
                     previewEnabled = mode != 0;
@@ -475,8 +516,17 @@ static void pollCommandLines() {
                 } else if (!meterConfigCommand(line)) {
                     cameraPollCommandLine(line);
                 }
-                line = "";
             }
+        }
+    }
+}
+
+static void pollCommandLines() {
+    static String line;
+    while (Serial.available()) {
+        char ch = (char)Serial.read();
+        if (ch == '\n' || ch == '\r') {
+            if (line.length()) { handleCommandLine(line); line = ""; }
         } else if (line.length() < 64) {
             line += ch;
         }
@@ -486,6 +536,8 @@ static void pollCommandLines() {
 void loop() {
     pollCommandLines();
 
+    apViewTick();
+
     const bool usb = (bool)Serial;
     const uint32_t now = millis();
 
@@ -494,14 +546,21 @@ void loop() {
     static uint32_t lastCfg = 0;
     if (usb && now - lastCfg > 5000) { lastCfg = now; meterConfigPrint(); }
 
-    // Preview only runs when explicitly enabled, and only over USB. With it off
-    // the node behaves exactly as it will in the field, which is the point.
+    // Capture whenever a viewer wants frames -- the USB preview when explicitly
+    // enabled, or the WiFi viewfinder whenever it is up. The AP case must not be
+    // gated on USB: at the meter there is no USB, which is the entire point of
+    // having it. With neither viewer active the node behaves exactly as it will
+    // in the field.
     static uint32_t lastPreview = 0;
-    bool previewing = previewEnabled && usb;
+    bool usbPreviewing = previewEnabled && usb;
+    bool previewing = usbPreviewing || apViewActive();
     if (previewing && now - lastPreview >= 200) {   // ~5 fps, sensor stays open
         lastPreview = now;
-        if (measure(&lastResult, true, true)) reportOcr(lastResult);
-        else Serial.println("[err] capture failed");
+        if (measure(&lastResult, true, true, usbPreviewing)) {
+            if (usbPreviewing) reportOcr(lastResult);
+        } else if (usbPreviewing) {
+            Serial.println("[err] capture failed");
+        }
     }
 
     // Same reasoning as the gateway: a node that gives up on its radio for good
