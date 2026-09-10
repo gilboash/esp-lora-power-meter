@@ -77,5 +77,14 @@
 // Battery sense: the XIAO ESP32S3 has NO on-board battery divider, unlike some
 // other XIAO boards. Reading is only meaningful after fitting an external
 // divider to D0 (see docs/hardware-notes.md). Gated by HAS_BATTERY_DIVIDER.
+// Illumination for the meter's reflective LCD, which has no backlight.
+// D6 is free on this node (UART TX, unused because logging goes over USB CDC).
+// Drive an LED through a transistor here, mounted OFF-AXIS: the meter sits
+// behind plastic sheeting and a clear cover, so a coaxial light reflects
+// straight back into the lens.
+#define LAMP_PIN         XIAO_D6   // GPIO43
+#define LAMP_ON          HIGH
+#define LAMP_OFF         LOW
+
 #define VBAT_ADC_PIN     XIAO_D0
 #define VBAT_DIVIDER     2.0f   // 2:1 divider (e.g. 2x 220k) -> adjust to yours

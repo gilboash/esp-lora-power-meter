@@ -1,0 +1,16 @@
+{
+  "roi_x": 230,
+  "roi_y": 284,
+  "roi_w": 158,
+  "roi_h": 75,
+  "digits": 3,
+  "wake": 5,
+  "thr": 0,
+  "invert": 1,
+  "lamp": 120,
+  "hb": 1,
+  "sleep": 0,
+  "flip": 0,
+  "mirror": 1,
+  "rotate": 270
+}

@@ -46,6 +46,7 @@
 // ---------------------------------------------------------------------------
 #define MSG_MAGIC_PING  0x57  // 'W' - camera node -> gateway
 #define MSG_MAGIC_ACK   0x41  // 'A' - gateway -> camera node
+#define MSG_MAGIC_READ  0x52  // 'R' - meter node -> gateway, a decoded reading
 #define MSG_VERSION     1
 
 #pragma pack(push, 1)
@@ -64,9 +65,25 @@ struct AckPacket {
     int16_t  rssi_dbm;  // uplink RSSI as measured at the gateway
     int16_t  snr_ddb;   // uplink SNR at the gateway, in tenths of a dB
 };
+// The actual telemetry. Deliberately tiny: at SF12 this is ~1 s of airtime,
+// so it fits comfortably inside the 1% duty cycle even every minute.
+struct ReadingPacket {
+    uint8_t  magic;      // MSG_MAGIC_READ
+    uint8_t  version;    // MSG_VERSION
+    uint16_t seq;        // wake counter, so the gateway can spot missed cycles
+    uint32_t value;      // meter reading in units of 0.1 kWh (avoids floats on the wire)
+    uint16_t vbat_mv;    // 0 when no battery divider is fitted
+    uint8_t  digits;     // how many digits were decoded
+    uint8_t  confidence; // 0-100, min per-digit segment confidence
+    uint8_t  flags;      // bit0: decode succeeded. A node that cannot read the
+                         // meter still transmits, so "blind" stays
+                         // distinguishable from "dead".
+};
+#define READING_FLAG_DECODE_OK 0x01
 #pragma pack(pop)
 
 static_assert(sizeof(PingPacket) == 7, "PingPacket must stay 7 bytes");
+static_assert(sizeof(ReadingPacket) == 13, "ReadingPacket must stay 13 bytes");
 static_assert(sizeof(AckPacket) == 8, "AckPacket must stay 8 bytes");
 
 // Timing

@@ -1,0 +1,844 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>LoRa Walk Test</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page:#f9f9f7; --surface:#fcfcfb; --border:rgba(0,0,0,.10); --grid:rgba(0,0,0,.08);
+    --text:#0b0b0b; --text-2:#52514e; --series:#2a78d6;
+    --good:#0ca30c; --warning:#fab219; --serious:#ec835a; --critical:#d03b3b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --page:#0d0d0d; --surface:#1a1a19; --border:rgba(255,255,255,.12); --grid:rgba(255,255,255,.10);
+      --text:#ffffff; --text-2:#c3c2b7; --series:#3987e5;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page:#0d0d0d; --surface:#1a1a19; --border:rgba(255,255,255,.12); --grid:rgba(255,255,255,.10);
+    --text:#ffffff; --text-2:#c3c2b7; --series:#3987e5;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin:0; background:var(--page); color:var(--text);
+    font:14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    padding:16px; padding-bottom:48px;
+  }
+  .wrap { max-width:920px; margin:0 auto; display:flex; flex-direction:column; gap:14px; }
+  header { display:flex; flex-wrap:wrap; align-items:baseline; gap:10px; }
+  h1 { font-size:17px; font-weight:650; margin:0; letter-spacing:-.01em; }
+  .pills { display:flex; gap:6px; margin-left:auto; flex-wrap:wrap; }
+  .pill {
+    font-size:11px; font-weight:600; padding:3px 8px; border-radius:999px;
+    border:1px solid var(--border); color:var(--text-2); white-space:nowrap;
+    display:inline-flex; align-items:center; gap:5px;
+  }
+  .dot { width:7px; height:7px; border-radius:50%; background:var(--text-2); flex:none; }
+  .card { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:16px; }
+  .hero { display:flex; flex-wrap:wrap; gap:20px; align-items:flex-start; }
+  .hero-main { min-width:170px; }
+  .label { font-size:11px; font-weight:600; letter-spacing:.05em; text-transform:uppercase; color:var(--text-2); }
+  .huge { font-size:46px; font-weight:680; letter-spacing:-.03em; line-height:1.05; font-variant-numeric:tabular-nums; }
+  .huge span { font-size:19px; font-weight:600; color:var(--text-2); margin-left:4px; }
+  .badge {
+    display:inline-flex; align-items:center; gap:7px; margin-top:8px;
+    font-size:13px; font-weight:640; padding:4px 11px 4px 9px; border-radius:999px;
+    border:1.5px solid currentColor;
+  }
+  .badge svg { flex:none; }
+  .stats { display:grid; grid-template-columns:repeat(auto-fit, minmax(94px,1fr)); gap:14px; flex:1; min-width:220px; }
+  .stat-v { font-size:22px; font-weight:640; font-variant-numeric:tabular-nums; letter-spacing:-.02em; }
+  .stat-l { font-size:11px; color:var(--text-2); margin-top:1px; }
+  .chart-head { display:flex; align-items:baseline; gap:8px; margin-bottom:2px; }
+  .chart-title { font-size:13px; font-weight:640; }
+  .chart-sub { font-size:11px; color:var(--text-2); }
+  svg { display:block; width:100%; height:auto; touch-action:pan-y; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; }
+  input[type=text] {
+    flex:1; min-width:150px; padding:9px 11px; font-size:14px; font-family:inherit;
+    border:1px solid var(--border); border-radius:9px; background:var(--page); color:var(--text);
+  }
+  button {
+    padding:9px 15px; font-size:13px; font-weight:620; font-family:inherit; cursor:pointer;
+    border:1px solid var(--border); border-radius:9px; background:var(--page); color:var(--text);
+  }
+  button.primary { background:var(--series); border-color:var(--series); color:#fff; }
+  button:active { transform:translateY(1px); }
+  table { width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums; font-size:12.5px; }
+  th { text-align:right; font-size:10.5px; text-transform:uppercase; letter-spacing:.05em;
+       color:var(--text-2); font-weight:640; padding:0 0 7px; border-bottom:1px solid var(--border); }
+  th:first-child, td:first-child { text-align:left; }
+  td { padding:6px 0; border-bottom:1px solid var(--grid); text-align:right; }
+  tbody tr:last-child td { border-bottom:0; }
+  .scroll { overflow-x:auto; }
+  .muted { color:var(--text-2); }
+  .marks { display:flex; flex-direction:column; gap:6px; margin-top:12px; }
+  .mark {
+    display:flex; gap:10px; align-items:baseline; font-size:12.5px;
+    padding:6px 9px; background:var(--page); border-radius:7px; border:1px solid var(--border);
+  }
+  .mark b { font-weight:620; }
+  .empty { color:var(--text-2); font-size:12.5px; padding:6px 0; }
+  footer { font-size:11.5px; color:var(--text-2); text-align:center; }
+  .tabs { display:flex; gap:4px; border-bottom:1px solid var(--border); }
+  .tab {
+    border:0; border-bottom:2px solid transparent; border-radius:0;
+    background:none; color:var(--text-2); font-weight:620; font-size:13px;
+    padding:8px 13px; cursor:pointer;
+  }
+  .tab[aria-selected="true"] { color:var(--text); border-bottom-color:var(--series); }
+  .tab:active { transform:none; }
+  .linkcard { padding:18px 18px 16px; }
+  .link-row { display:flex; flex-wrap:wrap; gap:16px 24px;
+              align-items:center; justify-content:space-between; }
+  .link-state { display:flex; align-items:center; gap:11px;
+                font-size:27px; font-weight:690; letter-spacing:-.025em; line-height:1.1; }
+  .link-dot { width:14px; height:14px; border-radius:50%; flex:none;
+              background:var(--text-2); }
+  .link-dot.live { animation:pulse 2.4s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.35; } }
+  @media (prefers-reduced-motion: reduce) { .link-dot.live { animation:none; } }
+  .link-foot { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-top:2px; }
+  .link-foot button { padding:6px 12px; font-size:12px; }
+  .link-right { display:flex; flex-direction:column; align-items:flex-end; gap:5px; }
+  .link-right .huge { font-size:38px; }
+  @media (max-width:520px) {
+    .link-right { align-items:flex-start; }
+    .link-row { gap:10px; }
+  }
+  .camwrap {
+    position:relative; background:#000; border-radius:10px; overflow:hidden;
+    display:flex; align-items:center; justify-content:center; min-height:200px;
+  }
+  /* The board is often mounted sideways at a meter; the sensor cannot rotate
+     90 degrees, so rotation is applied here instead. */
+  #camstage { position:relative; display:inline-block; line-height:0;
+              transition:transform .15s ease; transform-origin:center center; }
+  #cam { display:block; max-width:100%; max-height:60vh; }
+  #roi { position:absolute; inset:0; width:100%; height:100%; cursor:crosshair;
+         touch-action:none; }
+  .roi-rect { fill:rgba(42,120,214,.18); stroke:var(--series); stroke-width:2;
+              vector-effect:non-scaling-stroke; }
+  .roi-cell { fill:none; stroke:var(--series); stroke-width:1; opacity:.55;
+              vector-effect:non-scaling-stroke; stroke-dasharray:4 3; }
+  .seg-on  { color:var(--good); font-weight:660; }
+  .seg-off { color:var(--text-2); }
+  .seg-mid { color:var(--serious); font-weight:660; }
+  .readout { display:flex; flex-wrap:wrap; gap:16px; align-items:baseline; margin-top:12px; }
+  .big-read { font-size:30px; font-weight:680; letter-spacing:-.02em;
+              font-variant-numeric:tabular-nums; }
+  .seg { font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:19px;
+         letter-spacing:.14em; }
+  .num { width:64px; }
+  .camoff { color:#888; font-size:13px; padding:60px 12px; text-align:center; }
+  .ctrls { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:11px; }
+  .ctrl { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--text-2); }
+  select, input[type=range] {
+    font:inherit; font-size:12.5px; padding:5px 7px; border-radius:7px;
+    border:1px solid var(--border); background:var(--page); color:var(--text);
+  }
+  input[type=range] { padding:0; width:96px; }
+  .toggle { padding:5px 10px; font-size:12px; border-radius:7px; }
+  .toggle[aria-pressed="true"] { background:var(--series); border-color:var(--series); color:#fff; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>LoRa Walk Test</h1>
+    <div class="pills" id="pills"></div>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button class="tab" role="tab" aria-selected="true"  data-tab="monitor">Monitor</button>
+    <button class="tab" role="tab" aria-selected="false" data-tab="camera">Camera &amp; ROI</button>
+  </nav>
+
+  <div class="card linkcard" id="linkcard" data-pane="monitor">
+    <div class="link-row">
+      <div class="link-state" id="linkstate">
+        <span class="link-dot" id="linkdot"></span>
+        <span id="linktext">Waiting…</span>
+      </div>
+      <div class="link-right">
+        <div class="huge" id="rssi">--<span>dBm</span></div>
+        <div class="badge" id="quality" style="color:var(--text-2)">
+          <span id="qicon"></span><span id="qtext">waiting</span>
+        </div>
+      </div>
+    </div>
+    <div class="link-foot">
+      <span class="stat-l" id="lastseen">no packets yet</span>
+      <button id="testlink" title="Ask the node to capture and transmit now">Test link</button>
+    </div>
+    <div class="stats" style="margin-top:15px">
+      <div><div class="stat-v" id="s-rx">0</div><div class="stat-l">received</div></div>
+      <div><div class="stat-v" id="s-miss">0</div><div class="stat-l">missed</div></div>
+      <div><div class="stat-v" id="s-pdr">--</div><div class="stat-l">delivery</div></div>
+      <div><div class="stat-v" id="s-snr">--</div><div class="stat-l">SNR dB</div></div>
+    </div>
+  </div>
+
+  <div class="card" id="camcard" data-pane="camera">
+    <div class="chart-head" style="margin-bottom:10px">
+      <span class="chart-title">Camera</span>
+      <span class="chart-sub" id="cam-sub">not connected</span>
+      <span style="margin-left:auto; display:flex; gap:8px">
+        <button onclick="window.open('/frame.jpg','_blank')">Snapshot</button>
+      </span>
+    </div>
+    <div class="camwrap" id="camwrap">
+      <div class="camoff" id="camoff">
+        Preview is off.<br>It turns on when this tab is open and the node is on USB.
+      </div>
+      <div id="camstage" hidden>
+        <img id="cam" alt="Live view from the meter camera">
+        <svg id="roi" preserveAspectRatio="none"></svg>
+      </div>
+    </div>
+    <div class="readout" id="readout" hidden>
+      <div>
+        <div class="label">Decoded</div>
+        <div class="big-read" id="ocr-val">--</div>
+      </div>
+      <div>
+        <div class="label">Digits</div>
+        <div class="seg" id="ocr-seg">------</div>
+      </div>
+      <div>
+        <div class="stat-v" id="ocr-conf">--</div>
+        <div class="stat-l">confidence</div>
+      </div>
+      <div>
+        <div class="stat-v" id="ocr-thr">--</div>
+        <div class="stat-l">threshold</div>
+      </div>
+    </div>
+    <div id="segbox" hidden>
+      <div class="label" style="margin:14px 0 7px">Decoder view</div>
+      <div class="scroll">
+        <table id="segtable">
+          <thead><tr><th>Digit</th><th>a</th><th>b</th><th>c</th><th>d</th>
+                     <th>e</th><th>f</th><th>g</th><th>Read</th></tr></thead>
+          <tbody id="segbody"></tbody>
+        </table>
+      </div>
+      <div class="stat-l" id="seghint" style="margin-top:7px"></div>
+    </div>
+    <div class="ctrls">
+      <span class="ctrl">Rotate
+        <select id="rot">
+          <option value="0" selected>0&deg;</option><option value="90">90&deg;</option>
+          <option value="180">180&deg;</option><option value="270">270&deg;</option>
+        </select></span>
+      <span class="ctrl">Size
+        <select id="size">
+          <option value="QQVGA">160&times;120</option>
+          <option value="HQVGA">240&times;176</option>
+          <option value="QVGA" selected>320&times;240</option>
+          <option value="CIF">400&times;296</option>
+          <option value="VGA">640&times;480</option>
+          <option value="SVGA">800&times;600</option>
+        </select></span>
+      <span class="ctrl">Quality
+        <input type="range" id="qual" min="8" max="40" value="12" title="lower = better">
+        <span id="qualv" style="min-width:18px">12</span></span>
+      <button class="toggle" id="flip" aria-pressed="false">Flip</button>
+      <button class="toggle" id="mirror" aria-pressed="false">Mirror</button>
+    </div>
+    <div class="ctrls" style="border-top:1px solid var(--border); padding-top:11px">
+      <span class="ctrl"><b style="color:var(--text)">ROI</b>
+        <span id="roi-txt" class="muted">drag on the image</span></span>
+      <span class="ctrl">Digits
+        <input type="text" inputmode="numeric" class="num" id="digits" value="6"></span>
+      <span class="ctrl">Wake s
+        <input type="text" inputmode="numeric" class="num" id="wake" value="300"></span>
+      <span class="ctrl">Thresh
+        <input type="text" inputmode="numeric" class="num" id="thr" value="0"
+               title="0 = automatic (Otsu)"></span>
+      <button class="toggle" id="invert" aria-pressed="false"
+              title="segments lighter than background">Invert</button>
+      <button class="toggle" id="binview" aria-pressed="false"
+              title="show the thresholded ROI exactly as the decoder sees it">Threshold view</button>
+      <button class="primary" id="applyroi">Apply to node</button>
+      <button id="clearroi">Clear ROI</button>
+    </div>
+  </div>
+
+  <div class="card" id="readcard" data-pane="monitor" hidden>
+    <div class="chart-head" style="margin-bottom:10px">
+      <span class="chart-title">Meter readings received over LoRa</span>
+      <span class="chart-sub" id="read-sub"></span>
+    </div>
+    <div class="hero">
+      <div class="hero-main">
+        <div class="label">Latest</div>
+        <div class="huge" id="read-val">--<span>kWh</span></div>
+        <div class="stat-l" id="read-age">no readings yet</div>
+      </div>
+      <div class="stats">
+        <div><div class="stat-v" id="read-conf">--</div><div class="stat-l">confidence</div></div>
+        <div><div class="stat-v" id="read-rssi">--</div><div class="stat-l">RSSI dBm</div></div>
+        <div><div class="stat-v" id="read-snr">--</div><div class="stat-l">SNR dB</div></div>
+        <div><div class="stat-v" id="read-bat">--</div><div class="stat-l">battery mV</div></div>
+      </div>
+    </div>
+    <div class="scroll" style="margin-top:12px">
+      <table>
+        <thead><tr><th>Time</th><th>Wake</th><th>Value</th><th>Conf</th><th>RSSI</th><th>SNR</th></tr></thead>
+        <tbody id="read-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card" data-pane="monitor">
+    <div class="chart-head">
+      <span class="chart-title">Signal strength over time</span>
+      <span class="chart-sub" id="chart-sub"></span>
+    </div>
+    <svg id="chart" viewBox="0 0 760 250" preserveAspectRatio="none" role="img"
+         aria-label="Received signal strength for each packet, in dBm"></svg>
+  </div>
+
+  <div class="card" data-pane="monitor">
+    <div class="label" style="margin-bottom:9px">Mark where you are</div>
+    <div class="row">
+      <input type="text" id="marklabel" placeholder="e.g. stairwell level -1" autocomplete="off">
+      <button class="primary" id="markbtn">Drop marker</button>
+    </div>
+    <div class="marks" id="marks"></div>
+  </div>
+
+  <div class="card" data-pane="monitor">
+    <div class="chart-head" style="margin-bottom:10px">
+      <span class="chart-title">Recent packets</span>
+      <span class="chart-sub">newest first</span>
+      <span style="margin-left:auto; display:flex; gap:8px">
+        <button onclick="location.href='/api/export'">Export CSV</button>
+        <button id="resetbtn">Reset</button>
+      </span>
+    </div>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Time</th><th>Seq</th><th>RSSI</th><th>SNR</th><th>Freq err</th><th>Missed</th></tr></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <footer id="foot">connecting…</footer>
+</div>
+
+<script>
+// Quality thresholds mirror the firmware's LED buckets so the page and the
+// blinking board never disagree.
+const STRONG = -100, USABLE = -115;
+const ICONS = {
+  good:     '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.2 3.2L13 5"/></svg>',
+  warning:  '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M8 3.2v6"/><circle cx="8" cy="12.4" r=".2"/></svg>',
+  serious:  '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M8 2.6l6 10.8H2z"/></svg>',
+  critical: '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4.4 4.4l7.2 7.2M11.6 4.4l-7.2 7.2"/></svg>'
+};
+function quality(rssi) {
+  if (rssi === null || rssi === undefined) return { key:'critical', text:'no signal' };
+  if (rssi > STRONG) return { key:'good',    text:'strong' };
+  if (rssi > USABLE) return { key:'warning', text:'usable' };
+  return { key:'serious', text:'marginal' };
+}
+const fmtClock = t => new Date(t*1000).toLocaleTimeString();
+const ago = s => s < 1 ? 'just now' : s < 90 ? Math.round(s)+'s ago' : Math.round(s/60)+'m ago';
+
+let hoverIdx = null, state = null;
+
+function drawChart(pkts, markers) {
+  const svg = document.getElementById('chart');
+  const W = 760, H = 250, L = 46, R = 12, T = 14, B = 26;
+  if (!pkts.length) {
+    svg.innerHTML = `<text x="${W/2}" y="${H/2}" text-anchor="middle"
+      fill="var(--text-2)" font-size="13">waiting for the first packet…</text>`;
+    return;
+  }
+  const vals = pkts.map(p => p.rssi);
+  let lo = Math.min(...vals, USABLE - 5), hi = Math.max(...vals, STRONG + 5);
+  const pad = Math.max(4, (hi - lo) * 0.12); lo -= pad; hi += pad;
+  const x = i => L + (pkts.length === 1 ? (W-L-R)/2 : i * (W - L - R) / (pkts.length - 1));
+  const y = v => T + (hi - v) * (H - T - B) / (hi - lo);
+
+  let out = '';
+  // Recessive gridlines with dBm labels.
+  const step = (hi - lo) > 60 ? 20 : 10;
+  for (let g = Math.ceil(lo/step)*step; g <= hi; g += step) {
+    out += `<line x1="${L}" y1="${y(g).toFixed(1)}" x2="${W-R}" y2="${y(g).toFixed(1)}"
+            stroke="var(--grid)" stroke-width="1"/>
+            <text x="${L-8}" y="${(y(g)+3.5).toFixed(1)}" text-anchor="end"
+            fill="var(--text-2)" font-size="10.5">${g}</text>`;
+  }
+  // Quality thresholds: dashed, labelled, so the bands are readable without color.
+  for (const [v, lbl] of [[STRONG,'strong'], [USABLE,'marginal']]) {
+    if (v > lo && v < hi) {
+      out += `<line x1="${L}" y1="${y(v).toFixed(1)}" x2="${W-R}" y2="${y(v).toFixed(1)}"
+              stroke="var(--text-2)" stroke-width="1" stroke-dasharray="3 4" opacity=".55"/>
+              <text x="${W-R-3}" y="${(y(v)-5).toFixed(1)}" text-anchor="end"
+              fill="var(--text-2)" font-size="10">${lbl} ${v}</text>`;
+    }
+  }
+  // Location markers as vertical ticks.
+  markers.forEach(m => {
+    let idx = -1;
+    for (let i = 0; i < pkts.length; i++) if (pkts[i].t <= m.t) idx = i;
+    if (idx < 0) return;
+    out += `<line x1="${x(idx).toFixed(1)}" y1="${T}" x2="${x(idx).toFixed(1)}" y2="${H-B}"
+            stroke="var(--text-2)" stroke-width="1" opacity=".4"/>`;
+  });
+  // Single series: 2px line, no legend needed.
+  const d = pkts.map((p,i) => `${i?'L':'M'}${x(i).toFixed(1)},${y(p.rssi).toFixed(1)}`).join('');
+  out += `<path d="${d}" fill="none" stroke="var(--series)" stroke-width="2"
+          stroke-linejoin="round" stroke-linecap="round"/>`;
+  // Emphasise the newest reading.
+  const li = pkts.length - 1;
+  out += `<circle cx="${x(li).toFixed(1)}" cy="${y(pkts[li].rssi).toFixed(1)}" r="4.5"
+          fill="var(--series)" stroke="var(--surface)" stroke-width="2"/>`;
+  // Crosshair + tooltip.
+  if (hoverIdx !== null && hoverIdx >= 0 && hoverIdx < pkts.length) {
+    const p = pkts[hoverIdx], px = x(hoverIdx), py = y(p.rssi);
+    out += `<line x1="${px.toFixed(1)}" y1="${T}" x2="${px.toFixed(1)}" y2="${H-B}"
+            stroke="var(--text-2)" stroke-width="1" opacity=".5"/>
+            <circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="5.5" fill="var(--series)"
+            stroke="var(--surface)" stroke-width="2"/>`;
+    const txt = `#${p.seq}  ${p.rssi} dBm  SNR ${p.snr}`;
+    const w = txt.length * 6.6 + 16;
+    const tx = Math.min(Math.max(px - w/2, L), W - R - w);
+    out += `<rect x="${tx.toFixed(1)}" y="${Math.max(T, py-38).toFixed(1)}" width="${w.toFixed(1)}"
+            height="24" rx="6" fill="var(--surface)" stroke="var(--border)"/>
+            <text x="${(tx+w/2).toFixed(1)}" y="${(Math.max(T,py-38)+16).toFixed(1)}"
+            text-anchor="middle" fill="var(--text)" font-size="11.5">${txt}</text>`;
+  }
+  out += `<text x="${L}" y="${H-7}" fill="var(--text-2)" font-size="10.5">${fmtClock(pkts[0].t)}</text>
+          <text x="${W-R}" y="${H-7}" text-anchor="end" fill="var(--text-2)" font-size="10.5">${fmtClock(pkts[li].t)}</text>`;
+  svg.innerHTML = out;
+
+  svg.onpointermove = e => {
+    const r = svg.getBoundingClientRect();
+    const sx = (e.clientX - r.left) / r.width * W;
+    let best = 0, bd = Infinity;
+    for (let i = 0; i < pkts.length; i++) {
+      const dd = Math.abs(x(i) - sx);
+      if (dd < bd) { bd = dd; best = i; }
+    }
+    if (best !== hoverIdx) { hoverIdx = best; drawChart(pkts, markers); }
+  };
+  svg.onpointerleave = () => { if (hoverIdx !== null) { hoverIdx = null; drawChart(pkts, markers); } };
+}
+
+function render(s) {
+  state = s;
+  const rds = s.readings || [];
+  // The signal panel must work in both modes. Walk-test pings and meter
+  // readings are different messages on the same link, and each carries the
+  // RSSI/SNR the gateway measured -- so whichever is arriving feeds the chart.
+  const meterMode = s.packets.length === 0 && rds.length > 0;
+  const pkts = meterMode
+    ? rds.map(r => ({ t: r.t, seq: r.seq, rssi: r.rssi, snr: r.snr,
+                      ferr: 0, vbat: r.vbat, missed: 0, pdr: null }))
+    : s.packets;
+  const last = meterMode ? (pkts[pkts.length - 1] || null) : s.last;
+
+  // Connection pills.
+  const pills = Object.entries(s.ports).map(([port, info]) => {
+    const name = info.role === '?' ? port.split('/').pop() : info.role;
+    const col = info.connected ? 'var(--good)' : 'var(--critical)';
+    return `<span class="pill"><span class="dot" style="background:${col}"></span>${name}</span>`;
+  });
+  if (!pills.length) pills.push('<span class="pill"><span class="dot"></span>no boards found</span>');
+  document.getElementById('pills').innerHTML = pills.join('');
+
+  // Stale link detection: the camera node pings on a fixed interval, so silence
+  // for much longer than that means the link dropped, not that it is idle.
+  const since = last ? s.now - last.t : null;
+  const wake = (s.cfg && s.cfg.wake) ? s.cfg.wake : 12;
+  // Allow one missed cycle plus camera/radio time before calling it lost.
+  const staleAfter = Math.max(32, wake * 2.5 + 20);
+  const stale = since !== null && since > staleAfter;
+  const q = stale ? { key:'critical', text:'link lost' } : quality(last ? last.rssi : null);
+
+  // The headline question: is the far node reachable right now?
+  const connected = last !== null && !stale;
+  const dot = document.getElementById('linkdot');
+  const stateEl = document.getElementById('linkstate');
+  const textEl = document.getElementById('linktext');
+  let stateColor, stateText;
+  if (last === null)      { stateColor = 'var(--text-2)';  stateText = 'Waiting for first packet'; }
+  else if (connected)     { stateColor = 'var(--good)';     stateText = 'Connected'; }
+  else                    { stateColor = 'var(--critical)'; stateText = 'Not connected'; }
+  stateEl.style.color = stateColor;
+  dot.style.background = stateColor;
+  dot.classList.toggle('live', connected);
+  textEl.textContent = stateText;
+
+  document.getElementById('rssi').innerHTML =
+    (last && !stale ? last.rssi.toFixed(0) : '--') + '<span>dBm</span>';
+  const badge = document.getElementById('quality');
+  badge.style.color = `var(--${q.key})`;
+  document.getElementById('qicon').innerHTML = ICONS[q.key] || '';
+  document.getElementById('qtext').textContent = q.text;
+  document.getElementById('lastseen').textContent =
+    last ? `${meterMode ? 'last reading, wake' : 'last packet'} #${last.seq} · ${ago(since)}`
+         : 'no packets yet';
+
+  document.getElementById('s-rx').textContent = meterMode ? rds.length : s.total_received;
+  document.getElementById('s-miss').textContent = meterMode ? '--' : s.total_missed;
+  document.getElementById('s-pdr').textContent = meterMode
+    ? '--' : (s.pdr === null ? '--' : s.pdr.toFixed(0) + '%');
+  document.getElementById('s-snr').textContent = last && last.snr !== null ? last.snr.toFixed(1) : '--';
+
+  document.getElementById('chart-sub').textContent = pkts.length
+    ? `${pkts.length} ${meterMode ? 'readings' : 'packets'} shown` : '';
+  drawChart(pkts, s.markers);
+
+  document.getElementById('marks').innerHTML = s.markers.length
+    ? s.markers.slice().reverse().map(m =>
+        `<div class="mark"><b>${escapeHtml(m.label)}</b>
+         <span class="muted">${m.rssi !== null && m.rssi !== undefined ? m.rssi + ' dBm' : 'no signal'}
+         · ${fmtClock(m.t)}</span></div>`).join('')
+    : '<div class="empty">No markers yet. Drop one at each spot you test.</div>';
+
+  document.getElementById('tbody').innerHTML = pkts.slice(-30).reverse().map(p =>
+    `<tr><td class="muted">${fmtClock(p.t)}</td><td>${p.seq}</td>
+     <td>${p.rssi}</td><td>${p.snr}</td><td>${p.ferr}</td><td>${p.missed}</td></tr>`).join('')
+    || '<tr><td colspan="6" class="empty">Waiting for packets…</td></tr>';
+
+  renderReadings(s.readings || [], s.now);
+  renderCamera(s.camera, s.ocr);
+  renderSegs(s.segs, s.diag);
+  adoptCfg(s.cfg);
+
+  const radio = Object.values(s.radio)[0];
+  document.getElementById('foot').textContent = radio ? radio.replace('[radio] ','') : 'waiting for a node…';
+}
+
+function renderReadings(rs, now) {
+  const card = document.getElementById('readcard');
+  lastHadReadings = rs.length > 0;
+  if (!rs.length) { card.hidden = true; return; }
+  card.hidden = (activeTab !== 'monitor');
+  const last = rs[rs.length - 1];
+  // The decimal position depends on the meter's register format, which is not
+  // settled yet, so the raw decoded digits are shown rather than a guess.
+  const decoded = last.decode_ok !== false;
+  document.getElementById('read-val').innerHTML = decoded
+    ? last.value + '<span>raw</span>'
+    : '--<span>decode failed</span>';
+  document.getElementById('read-val').style.color =
+    decoded ? 'var(--good)' : 'var(--serious)';
+  document.getElementById('read-age').textContent =
+    `wake #${last.seq} · ${ago(now - last.t)}` +
+    (decoded ? '' : ' · node alive, cannot read the display');
+  document.getElementById('read-conf').textContent = last.confidence;
+  document.getElementById('read-rssi').textContent = last.rssi.toFixed(0);
+  document.getElementById('read-snr').textContent = last.snr.toFixed(1);
+  document.getElementById('read-bat').textContent = last.vbat || '--';
+  document.getElementById('read-sub').textContent = `${rs.length} received`;
+  document.getElementById('read-body').innerHTML = rs.slice(-20).reverse().map(r =>
+    `<tr><td class="muted">${fmtClock(r.t)}</td><td>${r.seq}</td>
+     <td>${r.decode_ok === false ? '<span class="muted">fail</span>' : r.value}</td>
+     <td>${r.confidence}</td><td>${r.rssi.toFixed(0)}</td><td>${r.snr.toFixed(1)}</td></tr>`
+  ).join('');
+}
+
+// A healthy digit is bimodal: off segments near 0, lit segments near 100.
+// Values bunched around the 45% decision line mean the window is seeing
+// something ambiguous -- hollow strokes, a misaligned cell, or poor lighting --
+// and no threshold tweak will separate what is not separated.
+const SEG_THRESH = 45;
+function renderSegs(segs, diag) {
+  const box = document.getElementById('segbox');
+  if (!segs || !segs.length) { box.hidden = true; return; }
+  box.hidden = false;
+  const keys = ['a','b','c','d','e','f','g'];
+  let ambiguous = 0, total = 0;
+  document.getElementById('segbody').innerHTML = segs.map(sg => {
+    const cells = keys.map(k => {
+      const v = sg.fills[k];
+      total++;
+      let cls = 'seg-off';
+      if (v >= SEG_THRESH + 25) cls = 'seg-on';
+      else if (v >= SEG_THRESH - 25) { cls = 'seg-mid'; ambiguous++; }
+      return `<td class="${cls}">${v}</td>`;
+    }).join('');
+    return `<tr><td>d${sg.digit}</td>${cells}<td><b>${escapeHtml(sg.read)}</b></td></tr>`;
+  }).join('');
+  const hint = document.getElementById('seghint');
+  if (diag && diag.border_ink >= 25) {
+    hint.textContent = `${diag.border_ink}% of the ROI border reads as lit — the box is `
+      + `catching the bezel or surround, not just the display. Redraw it strictly `
+      + `inside the display window.`;
+  } else if (diag && diag.contrast < 60) {
+    hint.textContent = `Low contrast (${diag.contrast}). Add light before tuning anything else.`;
+  } else if (ambiguous > total / 3) {
+    hint.textContent = `${ambiguous} of ${total} segments sit near the ${SEG_THRESH}% line — `
+      + `segments are not reading as clearly on or off. Usually hollow/thin strokes, `
+      + `a cell boundary cutting a digit, or uneven lighting.`;
+  } else {
+    hint.textContent = `threshold ${diag ? diag.threshold : '--'}, `
+      + `contrast ${diag ? diag.contrast : '--'}, `
+      + `trim ${diag ? diag.trim_w + '\u00d7' + diag.trim_h : '--'}`;
+  }
+}
+
+function escapeHtml(x) {
+  return String(x).replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+let lastHadReadings = false;
+let roiBox = null;          // {x,y,w,h} in image pixels
+let imgW = 0, imgH = 0;
+let dragFrom = null;
+
+// Rotation is applied on the node, to the pixels, before crop and decode.
+// Doing it in CSS instead would leave the decoder slicing digit cells across
+// the digit row while the picture looked fine.
+function applyRotation() {
+  document.getElementById('camwrap').style.height = 'auto';
+}
+
+function syncSvgViewBox() {
+  const img = document.getElementById('cam'), svg = document.getElementById('roi');
+  if (!img.naturalWidth) return;
+  imgW = img.naturalWidth; imgH = img.naturalHeight;
+  svg.setAttribute('viewBox', `0 0 ${imgW} ${imgH}`);
+  drawRoi();
+}
+
+// Client coords -> image pixels. getScreenCTM already accounts for the CSS
+// rotation on the stage, so no rotation maths is needed here.
+function toImage(evt) {
+  const svg = document.getElementById('roi');
+  const ctm = svg.getScreenCTM();
+  if (!ctm) return null;
+  const pt = svg.createSVGPoint();
+  pt.x = evt.clientX; pt.y = evt.clientY;
+  const p = pt.matrixTransform(ctm.inverse());
+  return { x: Math.round(p.x), y: Math.round(p.y) };
+}
+
+function drawRoi() {
+  const svg = document.getElementById('roi');
+  if (!roiBox) { svg.innerHTML = ''; document.getElementById('roi-txt').textContent = 'drag on the image'; return; }
+  const { x, y, w, h } = roiBox;
+  const n = Math.max(1, parseInt(document.getElementById('digits').value) || 1);
+  let out = `<rect class="roi-rect" x="${x}" y="${y}" width="${w}" height="${h}"/>`;
+  // Show where the digit cells will fall: the decoder slices the ROI into
+  // equal columns, so misalignment here is the usual cause of a bad read.
+  for (let i = 1; i < n; i++) {
+    const cx = x + (w * i) / n;
+    out += `<line class="roi-cell" x1="${cx}" y1="${y}" x2="${cx}" y2="${y + h}"/>`;
+  }
+  svg.innerHTML = out;
+  document.getElementById('roi-txt').innerHTML =
+    `<b style="color:var(--text)">${w}&times;${h}</b> at ${x},${y}`;
+}
+
+function initRoiPointer() {
+  const svg = document.getElementById('roi');
+  svg.addEventListener('pointerdown', e => {
+    const p = toImage(e); if (!p) return;
+    dragFrom = p; svg.setPointerCapture(e.pointerId);
+    roiBox = { x: p.x, y: p.y, w: 0, h: 0 }; drawRoi();
+  });
+  svg.addEventListener('pointermove', e => {
+    if (!dragFrom) return;
+    const p = toImage(e); if (!p) return;
+    roiBox = {
+      x: Math.max(0, Math.min(dragFrom.x, p.x)),
+      y: Math.max(0, Math.min(dragFrom.y, p.y)),
+      w: Math.min(imgW, Math.abs(p.x - dragFrom.x)),
+      h: Math.min(imgH, Math.abs(p.y - dragFrom.y)),
+    };
+    drawRoi();
+  });
+  const done = e => { if (dragFrom) { dragFrom = null; drawRoi(); } };
+  svg.addEventListener('pointerup', done);
+  svg.addEventListener('pointercancel', done);
+}
+
+async function camCmd(cmd) {
+  await fetch('/api/camera', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ cmd })
+  });
+}
+
+let camStarted = false;
+function renderCamera(c, ocr) {
+  const stage = document.getElementById('camstage'), off = document.getElementById('camoff');
+  const img = document.getElementById('cam'), sub = document.getElementById('cam-sub');
+  // Once the stream is up, leave it mounted. Resetting img.src tears down the
+  // MJPEG connection and forces a reconnect, which reads as a flicker between
+  // picture and blank -- so a brief gap in frames must not unmount anything.
+  const hasFrames = c && (c.live || (c.frames > 0 && c.age !== undefined && c.age < 20));
+  if (c && c.live && !camStarted) { camStarted = true; img.src = '/stream.mjpg'; }
+  if (camStarted && c && !c.live && c.age !== undefined && c.age > 20) {
+    camStarted = false; img.src = '';     // genuinely gone: release the connection
+  }
+  if (camStarted) {
+    stage.hidden = false; off.hidden = true;
+    sub.textContent = c.live
+      ? `${c.w}x${c.h} · ${c.fps} fps · ${(c.bytes/1024).toFixed(1)} kB/frame`
+      : 'waiting for frames…';
+  } else {
+    stage.hidden = true; off.hidden = false;
+    sub.textContent = (c && c.frames) ? 'preview off' : 'not connected';
+  }
+  const ro = document.getElementById('readout');
+  if (ocr) {
+    ro.hidden = false;
+    document.getElementById('ocr-val').textContent = ocr.ok ? ocr.value : '--';
+    document.getElementById('ocr-seg').textContent = ocr.digits_text || '';
+    document.getElementById('ocr-conf').textContent = ocr.confidence;
+    document.getElementById('ocr-thr').textContent = ocr.threshold;
+    document.getElementById('ocr-val').style.color =
+      ocr.ok ? 'var(--good)' : 'var(--text-2)';
+  } else {
+    ro.hidden = true;
+  }
+}
+
+// Adopt the node's stored settings the first time we hear them, so the page
+// reflects what the hardware actually has rather than page defaults.
+let cfgAdopted = false;
+function adoptCfg(cfg) {
+  if (!cfg) return;
+  // Always mirror the node's toggle state: these apply on click, so the node
+  // holds the truth and a stale button must never be able to push it back.
+  document.getElementById('invert').setAttribute('aria-pressed', cfg.invert ? 'true' : 'false');
+  document.getElementById('flip').setAttribute('aria-pressed', cfg.flip ? 'true' : 'false');
+  document.getElementById('mirror').setAttribute('aria-pressed', cfg.mirror ? 'true' : 'false');
+  if (cfg.rotate !== undefined) document.getElementById('rot').value = String(cfg.rotate);
+  if (cfgAdopted) return;
+  cfgAdopted = true;
+  document.getElementById('digits').value = cfg.digits;
+  document.getElementById('wake').value = cfg.wake;
+  document.getElementById('thr').value = cfg.thr;
+  if (cfg.roi_w && cfg.roi_h) {
+    roiBox = { x: cfg.roi_x, y: cfg.roi_y, w: cfg.roi_w, h: cfg.roi_h };
+    drawRoi();
+  }
+}
+
+// On the bench the node stays awake and only transmits on request, so the link
+// card would otherwise sit red while everything is in fact fine. This asks it
+// to capture and send one reading now. On battery it transmits on its own.
+// Tabs. Switching to Camera turns the node's preview on; leaving turns it off,
+// so the node spends its normal life behaving exactly as it will in the field.
+let activeTab = 'monitor';
+async function setTab(name) {
+  activeTab = name;
+  document.querySelectorAll('.tab').forEach(t =>
+    t.setAttribute('aria-selected', t.dataset.tab === name ? 'true' : 'false'));
+  document.querySelectorAll('[data-pane]').forEach(el => {
+    const mine = el.dataset.pane === name;
+    if (el.id === 'readcard') el.hidden = !mine || !lastHadReadings;
+    else el.hidden = !mine;
+  });
+  const bin = document.getElementById('binview').getAttribute('aria-pressed') === 'true';
+  await camCmd(`PREVIEW ${name === 'camera' ? (bin ? 2 : 1) : 0}`);
+}
+document.querySelectorAll('.tab').forEach(t => {
+  t.onclick = () => setTab(t.dataset.tab);
+});
+
+document.getElementById('testlink').onclick = async e => {
+  const b = e.target;
+  b.disabled = true; b.textContent = 'Sending…';
+  await camCmd('SEND');
+  setTimeout(() => { b.disabled = false; b.textContent = 'Test link'; }, 6000);
+};
+
+document.getElementById('rot').onchange = async e => {
+  await camCmd(`SET rotate ${e.target.value}`);
+  roiBox = null; drawRoi();     // ROI coordinates are meaningless after a turn
+  for (const k of ['roi_x','roi_y','roi_w','roi_h']) await camCmd(`SET ${k} 0`);
+};
+document.getElementById('cam').addEventListener('load', () => {
+  syncSvgViewBox(); applyRotation();
+});
+document.getElementById('digits').oninput = drawRoi;
+document.getElementById('size').onchange = e =>
+  camCmd(`CFG ${e.target.value} ${document.getElementById('qual').value}`);
+document.getElementById('qual').oninput = e => {
+  document.getElementById('qualv').textContent = e.target.value;
+};
+document.getElementById('qual').onchange = e =>
+  camCmd(`CFG ${document.getElementById('size').value} ${e.target.value}`);
+for (const [id, cmd] of [['flip','FLIP'], ['mirror','MIRROR']]) {
+  document.getElementById(id).onclick = e => {
+    const on = e.target.getAttribute('aria-pressed') !== 'true';
+    e.target.setAttribute('aria-pressed', on);
+    camCmd(`${cmd} ${on ? 1 : 0}`);
+  };
+}
+document.getElementById('binview').onclick = async e => {
+  const on = e.target.getAttribute('aria-pressed') !== 'true';
+  e.target.setAttribute('aria-pressed', on);
+  await camCmd(`PREVIEW ${on ? 2 : 1}`);
+};
+document.getElementById('invert').onclick = async e => {
+  const on = e.target.getAttribute('aria-pressed') !== 'true';
+  e.target.setAttribute('aria-pressed', on);
+  await camCmd(`SET invert ${on ? 1 : 0}`);
+};
+document.getElementById('clearroi').onclick = async () => {
+  roiBox = null; drawRoi();
+  for (const k of ['roi_x','roi_y','roi_w','roi_h']) await camCmd(`SET ${k} 0`);
+};
+document.getElementById('applyroi').onclick = async () => {
+  const btn = document.getElementById('applyroi');
+  btn.textContent = 'Sending…';
+  if (roiBox) {
+    await camCmd(`SET roi_x ${roiBox.x}`);
+    await camCmd(`SET roi_y ${roiBox.y}`);
+    await camCmd(`SET roi_w ${roiBox.w}`);
+    await camCmd(`SET roi_h ${roiBox.h}`);
+  }
+  await camCmd(`SET digits ${parseInt(document.getElementById('digits').value) || 6}`);
+  await camCmd(`SET wake ${parseInt(document.getElementById('wake').value) || 300}`);
+  await camCmd(`SET thr ${parseInt(document.getElementById('thr').value) || 0}`);
+  btn.textContent = 'Apply to node';
+};
+initRoiPointer();
+
+async function poll() {
+  try {
+    const r = await fetch('/api/state');
+    render(await r.json());
+  } catch (e) {
+    document.getElementById('foot').textContent = 'lost the server — is walktest_server.py still running?';
+  }
+}
+document.getElementById('markbtn').onclick = async () => {
+  const el = document.getElementById('marklabel');
+  await fetch('/api/mark', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ label: el.value })
+  });
+  el.value = ''; poll();
+};
+document.getElementById('marklabel').addEventListener('keydown', e => {
+  if (e.key === 'Enter') document.getElementById('markbtn').click();
+});
+document.getElementById('resetbtn').onclick = async () => {
+  if (confirm('Clear all packets and markers?')) { await fetch('/api/reset', {method:'POST'}); poll(); }
+};
+poll();
+setInterval(poll, 1000);
+setTab('monitor');
+</script>
+</body>
+</html>

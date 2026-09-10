@@ -13,15 +13,21 @@
 #include "link_config.h"
 #include "lora_radio.h"
 
-static volatile bool packetArrived = false;
-
 static uint32_t received = 0, missed = 0, badFrames = 0;
 static uint16_t lastSeq = 0;
 static bool haveLastSeq = false;
 static float rssiMin = 0, rssiMax = -200, rssiSum = 0;
 static uint32_t lastReportMs = 0;
 
-ICACHE_RAM_ATTR static void onPacket() { packetArrived = true; }
+// Polled rather than interrupt-driven; see the note in tx_main.cpp for why
+// attachInterrupt() panics the ipc1 task on this platform.
+static inline bool packetReady() {
+    // DIO1 alone is not enough: the SX126x shares one buffer between TX and RX,
+    // so a leftover TxDone assertion makes readData() hand back the packet we
+    // just sent. Confirm the RxDone flag before trusting the pin.
+    if (digitalRead(LORA_DIO1) != HIGH) return false;
+    return (radio.getIrqFlags() & (1UL << RADIOLIB_IRQ_RX_DONE)) != 0;
+}
 
 static void blink(uint16_t ms) {
     digitalWrite(USER_LED, LED_ON);
@@ -44,7 +50,7 @@ void setup() {
         while (true) { blink(60); delay(400); }
     }
 
-    radio.setPacketReceivedAction(onPacket);
+    pinMode(LORA_DIO1, INPUT);
     int16_t state = radio.startReceive();
     if (state != RADIOLIB_ERR_NONE) {
         Serial.printf("[fatal] startReceive failed: %d (%s)\n", state, loraErrName(state));
@@ -57,18 +63,43 @@ void setup() {
 }
 
 void loop() {
-    if (packetArrived) {
-        packetArrived = false;
-
+    if (packetReady()) {
+        // Two message types share the air: walk-test pings and meter readings.
+        // Read into a buffer big enough for either and dispatch on the magic byte.
+        uint8_t raw[sizeof(ReadingPacket)] = {};
+        size_t avail = radio.getPacketLength();
+        int16_t state = radio.readData(raw, sizeof(raw));
         PingPacket ping = {};
-        int16_t state = radio.readData((uint8_t *)&ping, sizeof(ping));
+        ReadingPacket rd = {};
+        bool isReading = (avail == sizeof(ReadingPacket) && raw[0] == MSG_MAGIC_READ);
+        if (isReading) memcpy(&rd, raw, sizeof(rd));
+        else           memcpy(&ping, raw, min(avail, sizeof(ping)));
 
         // Capture link metrics before touching the radio again.
         float rssi = radio.getRSSI();
         float snr = radio.getSNR();
         float ferr = radio.getFrequencyError();
 
-        if (state == RADIOLIB_ERR_NONE && ping.magic == MSG_MAGIC_PING &&
+        if (state == RADIOLIB_ERR_NONE && isReading && rd.version == MSG_VERSION) {
+            // A decoded meter reading. Value travels as tenths of a kWh.
+            received++;
+            Serial.printf("READING,%u,%lu,%u,%u,%.1f,%.1f,%u,%u\n",
+                          rd.seq, (unsigned long)rd.value, rd.digits,
+                          rd.confidence, rssi, snr, rd.vbat_mv,
+                          (rd.flags & READING_FLAG_DECODE_OK) ? 1 : 0);
+
+            delay(ACK_TURNAROUND_MS);
+            AckPacket ack = {};
+            ack.magic = MSG_MAGIC_ACK;
+            ack.version = MSG_VERSION;
+            ack.seq = rd.seq;
+            ack.rssi_dbm = (int16_t)lroundf(rssi);
+            ack.snr_ddb = (int16_t)lroundf(snr * 10.0f);
+            radio.transmit((uint8_t *)&ack, sizeof(ack));
+            radio.clearIrqFlags(0xFFFFFFFFUL);
+            blink(20);
+
+        } else if (state == RADIOLIB_ERR_NONE && ping.magic == MSG_MAGIC_PING &&
             ping.version == MSG_VERSION) {
 
             received++;
@@ -105,6 +136,7 @@ void loop() {
                 Serial.printf("[warn] ACK transmit failed: %d (%s)\n",
                               txState, loraErrName(txState));
             }
+            radio.clearIrqFlags(0xFFFFFFFFUL);  // drop TxDone from our own ACK
             blink(20);
         } else if (state != RADIOLIB_ERR_NONE) {
             badFrames++;

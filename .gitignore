@@ -1,3 +1,5 @@
 .pio/
 .vscode/
 *.bin
+__pycache__/
+*.pyc

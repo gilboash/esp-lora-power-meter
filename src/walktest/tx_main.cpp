@@ -16,12 +16,24 @@
 #include "link_config.h"
 #include "lora_radio.h"
 
-static volatile bool packetArrived = false;
 static uint16_t seq = 0;
 static uint32_t sent = 0, acked = 0;
 static uint32_t pingIntervalMs = PING_INTERVAL_MS;
 
-ICACHE_RAM_ATTR static void onPacket() { packetArrived = true; }
+// Poll DIO1 rather than attaching an interrupt.
+//
+// RadioLib's setPacketReceivedAction() calls attachInterrupt(), and ESP-IDF
+// routes GPIO ISR registration through the ipc1 task, whose stack is ~1 kB.
+// esp_intr_alloc() plus heap poisoning overflows it and panics with
+// "Stack canary watchpoint triggered (ipc1)". startReceive() raises DIO1 on
+// RxDone either way, so polling it is equivalent and allocates nothing.
+static inline bool packetReady() {
+    // DIO1 alone is not enough: the SX126x shares one buffer between TX and RX,
+    // so a leftover TxDone assertion makes readData() hand back the packet we
+    // just sent. Confirm the RxDone flag before trusting the pin.
+    if (digitalRead(LORA_DIO1) != HIGH) return false;
+    return (radio.getIrqFlags() & (1UL << RADIOLIB_IRQ_RX_DONE)) != 0;
+}
 
 static void blink(uint8_t times, uint16_t onMs, uint16_t offMs) {
     for (uint8_t i = 0; i < times; i++) {
@@ -72,7 +84,7 @@ void setup() {
     Serial.printf("[duty] airtime %lu ms, ping interval %lu ms\n",
                   (unsigned long)toa, (unsigned long)pingIntervalMs);
 
-    radio.setPacketReceivedAction(onPacket);
+    pinMode(LORA_DIO1, INPUT);
     Serial.println("seq,tx_ok,ack,up_rssi,up_snr,dn_rssi,dn_snr,pdr%,vbat_mv");
 }
 
@@ -94,13 +106,12 @@ void loop() {
     float dnRssi = 0, dnSnr = 0;
 
     if (txOk) {
-        packetArrived = false;
+        radio.clearIrqFlags(0xFFFFFFFFUL);  // drop TxDone before listening
         radio.startReceive();
 
         uint32_t waitStart = millis();
         while (millis() - waitStart < ACK_TIMEOUT_MS) {
-            if (packetArrived) {
-                packetArrived = false;
+            if (packetReady()) {
                 AckPacket ack = {};
                 int16_t rd = radio.readData((uint8_t *)&ack, sizeof(ack));
                 if (rd == RADIOLIB_ERR_NONE && ack.magic == MSG_MAGIC_ACK &&
