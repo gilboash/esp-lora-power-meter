@@ -77,11 +77,33 @@
 // Battery sense: the XIAO ESP32S3 has NO on-board battery divider, unlike some
 // other XIAO boards. Reading is only meaningful after fitting an external
 // divider to D0 (see docs/hardware-notes.md). Gated by HAS_BATTERY_DIVIDER.
+// ---------------------------------------------------------------------------
 // Illumination for the meter's reflective LCD, which has no backlight.
 // D6 is free on this node (UART TX, unused because logging goes over USB CDC).
-// Drive an LED through a transistor here, mounted OFF-AXIS: the meter sits
-// behind plastic sheeting and a clear cover, so a coaxial light reflects
-// straight back into the lens.
+// Driven by PWM at 20 kHz, active high: duty 0 is off, 255 is full brightness.
+// The carrier is kept well above the camera's row readout so the rolling
+// shutter cannot turn it into banding across the frame.
+//
+// Wiring, as verified on the LilyPad-style modules actually in use here:
+//
+//     D6 (GPIO43) ---- pad silk-screened "-"
+//     GND         ---- pad silk-screened "+"
+//
+// That reads backwards and is correct: the silkscreen on these clones does not
+// match the pads, so wiring by the markings gives an LED that never lights and
+// shows no other symptom. Electrically D6 remains the anode side and the pin
+// remains active high. The modules carry their own series resistor, so no
+// external one is needed.
+//
+// One or two modules can hang directly off the pin (~4-5 mA each at 3V3, inside
+// the GPIO's limit). For three or more, or to run them from BAT+ for more
+// light, switch them with an NPN: GPIO43 -> 1k -> base of a 2N3904, emitter to
+// GND, the modules' "-" pads to the collector.
+//
+// Mount OFF-AXIS. The meter sits behind plastic sheeting and its own clear
+// cover, so a light beside the lens reflects straight back into it. Aim across
+// the display from roughly 45 degrees, and expect to tune the brightness DOWN.
+// ---------------------------------------------------------------------------
 #define LAMP_PIN         XIAO_D6   // GPIO43
 #define LAMP_ON          HIGH
 #define LAMP_OFF         LOW

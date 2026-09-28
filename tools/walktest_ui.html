@@ -237,6 +237,10 @@
           <option value="0" selected>0&deg;</option><option value="90">90&deg;</option>
           <option value="180">180&deg;</option><option value="270">270&deg;</option>
         </select></span>
+      <span class="ctrl">Tilt
+        <input type="range" id="fine" min="-450" max="450" step="5" value="0"
+               title="fine rotation in tenths of a degree, applied after Rotate">
+        <span id="finev" style="min-width:36px">0.0&deg;</span></span>
       <span class="ctrl">Size
         <select id="size">
           <option value="QQVGA">160&times;120</option>
@@ -266,6 +270,12 @@
               title="segments lighter than background">Invert</button>
       <button class="toggle" id="binview" aria-pressed="false"
               title="show the thresholded ROI exactly as the decoder sees it">Threshold view</button>
+      <span class="ctrl">Lamp
+        <input type="range" id="bright" min="0" max="255" value="255"
+               title="LED brightness on D6">
+        <span id="brightv" style="min-width:26px">255</span></span>
+      <button class="toggle" id="lamphold" aria-pressed="false"
+              title="hold the LED on so it can be aimed">Lamp on</button>
       <button class="primary" id="applyroi">Apply to node</button>
       <button id="clearroi">Clear ROI</button>
     </div>
@@ -721,6 +731,18 @@ function adoptCfg(cfg) {
   document.getElementById('flip').setAttribute('aria-pressed', cfg.flip ? 'true' : 'false');
   document.getElementById('mirror').setAttribute('aria-pressed', cfg.mirror ? 'true' : 'false');
   if (cfg.rotate !== undefined) document.getElementById('rot').value = String(cfg.rotate);
+  if (cfg.fine !== undefined && document.activeElement.id !== 'fine') {
+    document.getElementById('fine').value = cfg.fine;
+    document.getElementById('finev').textContent = (cfg.fine / 10).toFixed(1) + '\u00b0';
+  }
+  if (cfg.bright !== undefined && document.activeElement.id !== 'bright') {
+    document.getElementById('bright').value = cfg.bright;
+    document.getElementById('brightv').textContent = cfg.bright;
+  }
+  // The lamp hold is persisted on the node, so the button reflects the node
+  // rather than whatever this page last did.
+  document.getElementById('lamphold')
+    .setAttribute('aria-pressed', cfg.hold ? 'true' : 'false');
   if (cfgAdopted) return;
   cfgAdopted = true;
   document.getElementById('digits').value = cfg.digits;
@@ -784,6 +806,23 @@ for (const [id, cmd] of [['flip','FLIP'], ['mirror','MIRROR']]) {
     camCmd(`${cmd} ${on ? 1 : 0}`);
   };
 }
+// Brightness applies live while the lamp is held, so glare can be dialled in
+// against the threshold view rather than guessed at.
+// Tilt is applied to the pixels on the node, like Rotate: the ROI must be drawn
+// on the corrected image or the cell slices cut across the digits.
+document.getElementById('fine').oninput = e => {
+  document.getElementById('finev').textContent = (e.target.value / 10).toFixed(1) + '\u00b0';
+};
+document.getElementById('fine').onchange = e => camCmd(`SET fine ${e.target.value}`);
+document.getElementById('bright').oninput = e => {
+  document.getElementById('brightv').textContent = e.target.value;
+};
+document.getElementById('bright').onchange = e => camCmd(`SET bright ${e.target.value}`);
+document.getElementById('lamphold').onclick = async e => {
+  const on = e.target.getAttribute('aria-pressed') !== 'true';
+  e.target.setAttribute('aria-pressed', on);
+  await camCmd(`LAMP ${on ? 1 : 0}`);
+};
 document.getElementById('binview').onclick = async e => {
   const on = e.target.getAttribute('aria-pressed') !== 'true';
   e.target.setAttribute('aria-pressed', on);

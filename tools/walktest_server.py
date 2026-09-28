@@ -45,7 +45,7 @@ ROW_RE = re.compile(r"^\d+(,[-\d.]*)+$")
 FRAME_RE = re.compile(r"^>>>FRAME (\d+) (\d+) (\d+) (\d+)$")
 OCR_RE = re.compile(r"^\[ocr\] value=(\d+) ok=(\d) conf=(\d+) thr=(\d+) segs=(\S*)$")
 CFG_RE = re.compile(r"^\[cfg\] roi=(\d+),(\d+),(\d+)x(\d+) digits=(\d+) wake=(\d+)s "
-                    r"thr=(\d+) inv=(\d+) lamp=(\d+)ms(?: hb=(\d+))?(?: sleep=(\d+))?(?: flip=(\d+))?(?: mirror=(\d+))?(?: rot=(\d+))?(?: ap=(\d+))?$")
+                    r"thr=(\d+) inv=(\d+) lamp=(\d+)ms(?: bright=(\d+))?(?: hold=(\d+))?(?: hb=(\d+))?(?: sleep=(\d+))?(?: flip=(\d+))?(?: mirror=(\d+))?(?: rot=(\d+))?(?: fine=(-?\d+))?(?: ap=(\d+))?$")
 # Emitted by the gateway when a decoded meter reading arrives over LoRa.
 ROI_RE = re.compile(r"^\[roi\] min=(\d+) mean=(\d+) max=(\d+) contrast=(\d+) thr=(\d+) "
                     r"trim=(\d+),(\d+) (\d+)x(\d+)(?: edge=(\d+))?$")
@@ -291,12 +291,15 @@ def reader(port):
                                 "roi_x": g[0], "roi_y": g[1], "roi_w": g[2], "roi_h": g[3],
                                 "digits": g[4], "wake": g[5], "thr": g[6],
                                 "invert": g[7], "lamp": g[8],
-                                "hb": (g[9] if len(g) > 9 else None),
-                                "sleep": (g[10] if len(g) > 10 else 0),
-                                "flip": (g[11] if len(g) > 11 else 0),
-                                "mirror": (g[12] if len(g) > 12 else 0),
-                                "rotate": (g[13] if len(g) > 13 else 0),
-                                "ap": (g[14] if len(g) > 14 else 0),
+                                "bright": (g[9] if len(g) > 9 else 255),
+                                "hold": (g[10] if len(g) > 10 else 0),
+                                "hb": (g[11] if len(g) > 11 else None),
+                                "sleep": (g[12] if len(g) > 12 else 0),
+                                "flip": (g[13] if len(g) > 13 else 0),
+                                "mirror": (g[14] if len(g) > 14 else 0),
+                                "rotate": (g[15] if len(g) > 15 else 0),
+                                "fine": (g[16] if len(g) > 16 else 0),
+                                "ap": (g[17] if len(g) > 17 else 0),
                             }
                         role = "camera"
                         note_role(role)

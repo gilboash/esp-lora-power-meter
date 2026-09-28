@@ -11,6 +11,11 @@ struct MeterConfig {
     uint8_t  threshold;     // 0 = auto (Otsu), else fixed 0-255
     uint8_t  invert;        // 1 when segments are lighter than the background
     uint16_t lamp_ms;       // illumination settle time before capture
+    uint8_t  lamp_bright;   // 0-255 PWM duty for the illumination LEDs
+    uint8_t  lamp_hold;     // 1 = keep the lamp lit continuously rather than
+                            // only around a capture. Persisted, because at the
+                            // meter there is no USB to switch it on from.
+                            // Turn it off before any battery deployment.
     uint8_t  heartbeat;     // transmit at least every N cycles, decode or not
     uint8_t  sleep_en;      // 0 = stay awake and transmit on a timer (development)
                             // 1 = deep sleep between wakes (battery deployment)
@@ -22,6 +27,11 @@ struct MeterConfig {
     uint16_t rotate;        // 0/90/180/270, applied to the PIXELS before crop
                             // and OCR -- a CSS-only rotation would leave the
                             // decoder slicing digit cells across the digit row
+    int16_t  fine_deg;      // additional tilt in TENTHS of a degree, -450..450,
+                            // applied after `rotate` about the frame centre.
+                            // A bracket on a meter is never square, and the
+                            // decoder's vertical cell slices are unforgiving of
+                            // even a degree or two.
 };
 
 extern MeterConfig CFG;

@@ -50,6 +50,20 @@ static bool radioUp = false;
 static void pollCommandLines();
 static void handleCommandLine(const String &line);
 
+// Illumination is PWM rather than on/off, because the meter sits behind plastic
+// sheeting and its own clear cover: too much light is the likelier failure, and
+// the usable range is narrow. 20 kHz keeps the carrier far above the camera's
+// row readout so the rolling shutter cannot pick up banding.
+static const uint32_t LAMP_PWM_HZ = 20000;
+// Mirrors CFG.lamp_hold, restored at boot. Unlike the camera preview this is
+// persisted, because the reason to hold the lamp on is to work at the meter --
+// where there is no USB to switch it on from.
+static bool lampHeld = false;
+
+static void lampSet(uint8_t duty) { ledcWrite(LAMP_PIN, duty); }
+static void lampOn()  { lampSet(CFG.lamp_bright); }
+static void lampOff() { lampSet(lampHeld ? CFG.lamp_bright : 0); }
+
 // ACK_TIMEOUT_MS is a sane floor at SF7-SF9, but an 8-byte ACK at SF12 needs
 // ~990 ms of airtime on its own -- longer than the 800 ms constant. Waiting too
 // little makes every successful transmission look failed: the node retries,
@@ -114,6 +128,49 @@ static uint8_t *rotateGray(const uint8_t *src, int sw, int sh, int deg,
         }
     }
     return buf;
+}
+
+// Rotate by an arbitrary angle about the centre, keeping the frame size.
+//
+// The coarse step above only handles quarter turns, which is all a tidy bench
+// setup needs. A bracket screwed to a meter cupboard is never square, and even
+// a couple of degrees of tilt matters: the decoder slices the ROI into vertical
+// columns, so across a 480-pixel frame a 2 degree tilt walks the digits about
+// 17 pixels out of their cells. Correcting it here, before the crop, keeps the
+// preview, the ROI and the decode in one coordinate system.
+//
+// Nearest-neighbour, not bilinear. Bilinear gives visibly smoother edges but
+// needs four source samples per pixel, and with both buffers in PSRAM those are
+// scattered reads: measured, it cost about 860 cycles per pixel and dropped the
+// viewfinder from 1.9 fps to 0.6, which makes aiming painful. One read per pixel
+// restores the frame rate, and the decoder thresholds the image anyway -- it
+// measures how much of a segment window is lit, which is barely affected by
+// edge interpolation.
+static uint8_t *rotateFine(const uint8_t *src, int w, int h, int tenthsDeg) {
+    if (tenthsDeg == 0) return (uint8_t *)src;
+
+    static uint8_t *fbuf = nullptr;
+    if (!fbuf) fbuf = (uint8_t *)ps_malloc(640 * 480);
+    if (!fbuf) return (uint8_t *)src;
+
+    const float rad = (float)tenthsDeg * 0.1f * 3.14159265f / 180.0f;
+    const float cs = cosf(rad), sn = sinf(rad);
+    const float cx = w * 0.5f, cy = h * 0.5f;
+
+    for (int y = 0; y < h; y++) {
+        // Inverse-map the start of the row, then walk along it.
+        float dy = (float)y - cy;
+        float sx = cx + (-cx) * cs + dy * sn;
+        float sy = cy - (-cx) * sn + dy * cs;
+        uint8_t *out = fbuf + (size_t)y * w;
+        for (int x = 0; x < w; x++, sx += cs, sy -= sn) {
+            int x0 = (int)(sx + 0.5f), y0 = (int)(sy + 0.5f);
+            out[x] = (x0 < 0 || y0 < 0 || x0 >= w || y0 >= h)
+                   ? 0                            // outside the source frame
+                   : src[(size_t)y0 * w + x0];
+        }
+    }
+    return fbuf;
 }
 
 // Burn the ROI outline into the preview frame itself.
@@ -189,12 +246,12 @@ static bool cropRoi(const uint8_t *src, int sw, int sh,
 // While previewing we therefore init once and hold it.
 static bool measure(OcrResult *out, bool sendPreview, bool keepOpen,
                     bool usbPreview = true) {
-    digitalWrite(LAMP_PIN, LAMP_ON);
+    lampOn();
     delay(CFG.lamp_ms);                  // let the LED and AGC settle
 
     bool wasOpen = cameraIsOpen();
     if (!wasOpen && !cameraBeginGray(MEASURE_FRAMESIZE)) {
-        digitalWrite(LAMP_PIN, LAMP_OFF);
+        lampOff();
         return false;
     }
     camera_fb_t *fb = nullptr;
@@ -213,6 +270,9 @@ static bool measure(OcrResult *out, bool sendPreview, bool keepOpen,
         if (!roi) roi = (uint8_t *)ps_malloc(640 * 480);
         int fw = 0, fh = 0;
         uint8_t *frame = rotateGray(fb->buf, fb->width, fb->height, CFG.rotate, &fw, &fh);
+        // Fine tilt correction runs after the quarter turn, so the two compose:
+        // the coarse step gets the frame upright, this squares it to the meter.
+        frame = rotateFine(frame, fw, fh, CFG.fine_deg);
         int rw = 0, rh = 0;
         if (roi && cropRoi(frame, fw, fh, roi, &rw, &rh)) {
             *out = ocrReadDigits(roi, rw, rh, CFG.digits, CFG.threshold, CFG.invert);
@@ -262,7 +322,7 @@ static bool measure(OcrResult *out, bool sendPreview, bool keepOpen,
     if (fb) esp_camera_fb_return(fb);
 
     if (!keepOpen) cameraEnd();
-    digitalWrite(LAMP_PIN, LAMP_OFF);
+    lampOff();
     return ok;
 }
 
@@ -278,13 +338,20 @@ static bool sendReading(const OcrResult &r) {
     pkt.flags = r.ok ? READING_FLAG_DECODE_OK : 0;
 
     // Up to three attempts: a single lost packet underground should not cost a
-    // whole wake interval of data.
-    for (int attempt = 0; attempt < 3; attempt++) {
+    // whole wake interval of data. Fewer while the viewfinder is up, because
+    // each attempt blocks the HTTP server for seconds -- see the pumping below.
+    const int attempts = apViewActive() ? 1 : 3;
+    for (int attempt = 0; attempt < attempts; attempt++) {
         if (radio.transmit((uint8_t *)&pkt, sizeof(pkt)) != RADIOLIB_ERR_NONE) continue;
         radio.clearIrqFlags(0xFFFFFFFFUL);
         radio.startReceive();
         uint32_t t0 = millis();
         while (millis() - t0 < ackTimeoutMs) {
+            // Keep the WiFi viewfinder alive during the wait. At SF12 an ACK
+            // window is over 1.5 s, and with the radio and the HTTP server on
+            // the same task, not pumping here starves the page: the phone's
+            // requests go unanswered and the image never loads.
+            apViewTick();
             if (packetReady()) {
                 AckPacket ack = {};
                 if (radio.readData((uint8_t *)&ack, sizeof(ack)) == RADIOLIB_ERR_NONE &&
@@ -297,7 +364,7 @@ static bool sendReading(const OcrResult &r) {
             delay(1);
         }
         radio.standby();
-        delay(200);
+        for (int i = 0; i < 20; i++) { apViewTick(); delay(10); }
     }
     return false;
 }
@@ -337,13 +404,22 @@ static void goToSleep() {
 
 void setup() {
     Serial.begin(115200);
-    pinMode(LAMP_PIN, OUTPUT);
-    digitalWrite(LAMP_PIN, LAMP_OFF);
+    // 8-bit resolution: 256 steps is far more than the usable range here.
+    ledcAttach(LAMP_PIN, LAMP_PWM_HZ, 8);
+    ledcWrite(LAMP_PIN, 0);
     pinMode(USER_LED, OUTPUT);
     digitalWrite(USER_LED, LED_OFF);
 
     bootCount++;
     meterConfigLoad();
+    // Restore the lamp before anything else, so walking up to the meter with a
+    // freshly powered node gives light immediately rather than only in the
+    // instant around a capture.
+    lampHeld = CFG.lamp_hold;
+    if (lampHeld) {
+        lampSet(CFG.lamp_bright);
+        Serial.printf("[lamp] held on at %u (SET hold 0 to release)\n", CFG.lamp_bright);
+    }
     blinkLed(1, 60, 0);   // "I woke up", visible on battery
 
     // Deciding bench vs field. How long to wait for USB depends on why we
@@ -369,7 +445,7 @@ void setup() {
     Serial.printf("[cam] PSRAM %s, %u bytes free\n",
                   psramFound() ? "ok" : "MISSING", (unsigned)ESP.getFreePsram());
     meterConfigPrint();
-    Serial.println("Commands: SET <key> <n> | PREVIEW 0|1|2 | SEND | AP <minutes>|0");
+    Serial.println("Commands: SET <key> <n> | PREVIEW 0|1|2 | SEND | AP <min>|0 | LAMP 0|1");
     apViewSetCommandHandler(handleCommandLine);
 
     // Bring the viewfinder up on its own when configured. Without this the AP
@@ -503,6 +579,16 @@ static void handleCommandLine(const String &line) {
                     meterConfigSave();
                     cameraSetOrientation(CFG.flip, CFG.mirror);
                     meterConfigPrint();
+                } else if (line.startsWith("LAMP ")) {
+                    // Hold the light on so it can be aimed and the glare judged
+                    // without racing the capture cycle. Persisted so it survives
+                    // the walk to the meter and a battery swap on the way.
+                    lampHeld = line.substring(5).toInt() != 0;
+                    CFG.lamp_hold = lampHeld ? 1 : 0;
+                    meterConfigSave();
+                    lampSet(lampHeld ? CFG.lamp_bright : 0);
+                    Serial.printf("[lamp] hold %s at %u\n",
+                                  lampHeld ? "on" : "off", CFG.lamp_bright);
                 } else if (line.startsWith("AP ")) {
                     int mins = line.substring(3).toInt();
                     if (mins > 0) apViewBegin((uint16_t)mins);
@@ -513,7 +599,9 @@ static void handleCommandLine(const String &line) {
                     previewBinary = (mode == 2);
                     if (!previewEnabled) cameraEnd();   // stop holding the sensor
                     Serial.printf("[preview] %s\n", previewEnabled ? (previewBinary ? "binary" : "on") : "off");
-                } else if (!meterConfigCommand(line)) {
+                } else if (meterConfigCommand(line)) {
+                    if (lampHeld) lampSet(CFG.lamp_bright);   // show it at once
+                } else {
                     cameraPollCommandLine(line);
                 }
             }
