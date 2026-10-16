@@ -50,6 +50,8 @@ CFG_RE = re.compile(r"^\[cfg\] roi=(\d+),(\d+),(\d+)x(\d+) digits=(\d+) wake=(\d
 ROI_RE = re.compile(r"^\[roi\] min=(\d+) mean=(\d+) max=(\d+) contrast=(\d+) thr=(\d+) "
                     r"trim=(\d+),(\d+) (\d+)x(\d+)(?: edge=(\d+))?$")
 SEG_RE = re.compile(r"^\[seg\] d(\d+):((?: [a-g]=\d+)+)\s+-> (.)$")
+# Emitted by the gateway for an optical pulse count from the pulse node.
+PULSE_RE = re.compile(r"^PULSE,(\d+),(\d+),(\d+),(\d+),(\d+),([-\d.]+),([-\d.]+),(\d+)$")
 READING_RE = re.compile(r"^READING,(\d+),(\d+),(\d+),(\d+),([-\d.]+),([-\d.]+),(\d+)(?:,(\d))?$")
 
 
@@ -74,6 +76,7 @@ class State:
         self.diag = None         # [roi] contrast/threshold/trim from the decoder
         self.segs = {}           # digit index -> per-segment fill percentages
         self.readings = []       # decoded readings that arrived over LoRa
+        self.pulses = []         # optical pulse counts from the pulse node
 
     def set_frame(self, jpeg, w, h, seq):
         with self.lock:
@@ -136,6 +139,7 @@ class State:
                 "segs": [self.segs[k] for k in sorted(self.segs)] if self.segs else [],
                 "cfg": self.cfg,
                 "readings": self.readings[-60:],
+                "pulses": self.pulses[-120:],
             }
 
 
@@ -302,6 +306,29 @@ def reader(port):
                                 "ap": (g[17] if len(g) > 17 else 0),
                             }
                         role = "camera"
+                        note_role(role)
+                        continue
+                    m = PULSE_RE.match(line)
+                    if m:
+                        seq, total, delta, secs, imp = (int(m.group(i)) for i in range(1, 6))
+                        rssi, snr = float(m.group(6)), float(m.group(7))
+                        vbat = int(m.group(8))
+                        # Live power, only meaningful when the node reported the
+                        # window it counted over (a manual SEND reports secs=0).
+                        watts = None
+                        if secs and imp:
+                            watts = (delta / imp) * 1000.0 * 3600.0 / secs
+                        with STATE.lock:
+                            STATE.pulses.append({
+                                "t": time.time(), "seq": seq, "total": total,
+                                "delta": delta, "secs": secs, "imp_kwh": imp,
+                                "kwh": total / imp if imp else None,
+                                "watts": watts, "rssi": rssi, "snr": snr,
+                                "vbat": vbat,
+                            })
+                            if len(STATE.pulses) > 2000:
+                                del STATE.pulses[:-2000]
+                        role = "gateway"
                         note_role(role)
                         continue
                     m = READING_RE.match(line)

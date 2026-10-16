@@ -47,6 +47,7 @@
 #define MSG_MAGIC_PING  0x57  // 'W' - camera node -> gateway
 #define MSG_MAGIC_ACK   0x41  // 'A' - gateway -> camera node
 #define MSG_MAGIC_READ  0x52  // 'R' - meter node -> gateway, a decoded reading
+#define MSG_MAGIC_PULSE 0x50  // 'P' - pulse node -> gateway, an optical count
 #define MSG_VERSION     1
 
 #pragma pack(push, 1)
@@ -80,10 +81,28 @@ struct ReadingPacket {
                          // distinguishable from "dead".
 };
 #define READING_FLAG_DECODE_OK 0x01
+
+// Counts from the optical pulse node.
+//
+// The meter's LED emits 500 pulses per kWh, so one pulse is 2 Wh. Cumulative
+// count rather than a rate: a lost packet then costs nothing, because the next
+// one carries the whole total. `delta` is for live power only and is allowed to
+// be wrong; `total` is the measurement.
+struct PulsePacket {
+    uint8_t  magic;      // MSG_MAGIC_PULSE
+    uint8_t  version;    // MSG_VERSION
+    uint16_t seq;        // transmission counter, so gaps are visible
+    uint32_t total;      // pulses counted since the node was last seeded
+    uint16_t delta;      // pulses since the previous transmission
+    uint16_t secs;       // seconds those `delta` pulses were counted over
+    uint16_t imp_kwh;    // pulses per kWh, so the gateway need not be told
+    uint16_t vbat_mv;    // 0 when no battery divider is fitted
+};
 #pragma pack(pop)
 
 static_assert(sizeof(PingPacket) == 7, "PingPacket must stay 7 bytes");
 static_assert(sizeof(ReadingPacket) == 13, "ReadingPacket must stay 13 bytes");
+static_assert(sizeof(PulsePacket) == 16, "PulsePacket must stay 16 bytes");
 static_assert(sizeof(AckPacket) == 8, "AckPacket must stay 8 bytes");
 
 // Timing

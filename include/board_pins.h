@@ -46,10 +46,17 @@
 
 #define NODE_NAME "camera"
 
-#elif defined(BOARD_GATEWAY_NODE)
+#elif defined(BOARD_GATEWAY_NODE) || defined(BOARD_PULSE_NODE)
 // ---------------------------------------------------------------------------
-// Gateway node: plain XIAO ESP32S3 + the Wio-SX1262 that shipped in the bundled
-// kit, which mates through the 30-pin board-to-board connector.
+// Both nodes carrying the 30-pin board-to-board Wio-SX1262 from the bundled
+// kit, which sits on GPIO 38-42:
+//
+//   BOARD_GATEWAY_NODE  plain XIAO ESP32S3 by the router, bridges to the host
+//   BOARD_PULSE_NODE    plain XIAO ESP32S3 at the meter, counts its pulse LED
+//
+// Confirmed per board with the diag probe rather than assumed: the two module
+// variants look similar and the pinouts share nothing, so a wrong guess gives
+// CHIP_NOT_FOUND and no other clue.
 //
 // Source of truth: meshtastic/firmware variants/esp32s3/seeed_xiao_s3/variant.h
 // ---------------------------------------------------------------------------
@@ -59,7 +66,32 @@
 #define LORA_RST   42
 #define LORA_RXEN  38
 
+#if defined(BOARD_PULSE_NODE)
+#define NODE_NAME "pulse"
+
+// ---------------------------------------------------------------------------
+// TEPT4400 phototransistor watching the meter's optical pulse output.
+//
+//     D0 (GPIO1) ---- collector
+//     GND        ---- emitter
+//
+// No external resistor: the pin's internal ~45k pull-up is the load. Dark
+// leaves the transistor off and the pin held high; light saturates it
+// (VCEsat 0.1 V) and drags the pin to ground. So a pulse is a FALLING edge.
+// Verified on the bench: covered reads 1 / 2521 mV, lit reads 0 / 0 mV.
+//
+// Dark current is 350 nA against a saturated pulse, a margin of about 100x, so
+// sensitivity is never the problem. Stray light is: room lighting alone pins
+// the input low, which is why the sensor must be shrouded and pressed against
+// the meter's LED rather than merely pointed at it.
+//
+// GPIO1 is clear of the B2B module (GPIO 38-42 plus the SPI bus) and is also
+// ADC1_CH0, so the raw level can be sampled to check aim and shrouding.
+// ---------------------------------------------------------------------------
+#define PULSE_PIN  XIAO_D0   // GPIO1
+#else
 #define NODE_NAME "gateway"
+#endif
 
 #else
 #error "Define BOARD_CAMERA_NODE or BOARD_GATEWAY_NODE (see platformio.ini)"

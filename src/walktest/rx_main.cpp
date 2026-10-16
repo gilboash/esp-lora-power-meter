@@ -90,13 +90,16 @@ void loop() {
     if (packetReady()) {
         // Two message types share the air: walk-test pings and meter readings.
         // Read into a buffer big enough for either and dispatch on the magic byte.
-        uint8_t raw[sizeof(ReadingPacket)] = {};
+        uint8_t raw[sizeof(PulsePacket)] = {};
         size_t avail = radio.getPacketLength();
         int16_t state = radio.readData(raw, sizeof(raw));
         PingPacket ping = {};
         ReadingPacket rd = {};
         bool isReading = (avail == sizeof(ReadingPacket) && raw[0] == MSG_MAGIC_READ);
-        if (isReading) memcpy(&rd, raw, sizeof(rd));
+        bool isPulse   = (avail == sizeof(PulsePacket)   && raw[0] == MSG_MAGIC_PULSE);
+        PulsePacket pp = {};
+        if (isPulse)        memcpy(&pp, raw, sizeof(pp));
+        else if (isReading) memcpy(&rd, raw, sizeof(rd));
         else           memcpy(&ping, raw, min(avail, sizeof(ping)));
 
         // Capture link metrics before touching the radio again.
@@ -104,7 +107,26 @@ void loop() {
         float snr = radio.getSNR();
         float ferr = radio.getFrequencyError();
 
-        if (state == RADIOLIB_ERR_NONE && isReading && rd.version == MSG_VERSION) {
+        if (state == RADIOLIB_ERR_NONE && isPulse && pp.version == MSG_VERSION) {
+            // Optical pulse count. The total is the measurement; delta/secs are
+            // only there so the dashboard can show live power.
+            received++;
+            Serial.printf("PULSE,%u,%lu,%u,%u,%u,%.1f,%.1f,%u\n",
+                          pp.seq, (unsigned long)pp.total, pp.delta, pp.secs,
+                          pp.imp_kwh, rssi, snr, pp.vbat_mv);
+
+            delay(ACK_TURNAROUND_MS);
+            AckPacket ack = {};
+            ack.magic = MSG_MAGIC_ACK;
+            ack.version = MSG_VERSION;
+            ack.seq = pp.seq;
+            ack.rssi_dbm = (int16_t)lroundf(rssi);
+            ack.snr_ddb = (int16_t)lroundf(snr * 10.0f);
+            radio.transmit((uint8_t *)&ack, sizeof(ack));
+            radio.clearIrqFlags(0xFFFFFFFFUL);
+            blink(20);
+
+        } else if (state == RADIOLIB_ERR_NONE && isReading && rd.version == MSG_VERSION) {
             // A decoded meter reading. Value travels as tenths of a kWh.
             received++;
             Serial.printf("READING,%u,%lu,%u,%u,%.1f,%.1f,%u,%u\n",

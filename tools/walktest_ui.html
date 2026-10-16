@@ -281,6 +281,32 @@
     </div>
   </div>
 
+  <div class="card" id="pulsecard" data-pane="monitor" hidden>
+    <div class="chart-head" style="margin-bottom:10px">
+      <span class="chart-title">Meter pulses</span>
+      <span class="chart-sub" id="pulse-sub"></span>
+    </div>
+    <div class="hero">
+      <div class="hero-main">
+        <div class="label">Energy</div>
+        <div class="huge" id="pulse-kwh">--<span>kWh</span></div>
+        <div class="stat-l" id="pulse-age">no counts yet</div>
+      </div>
+      <div class="stats">
+        <div><div class="stat-v" id="pulse-w">--</div><div class="stat-l">watts now</div></div>
+        <div><div class="stat-v" id="pulse-total">--</div><div class="stat-l">pulses</div></div>
+        <div><div class="stat-v" id="pulse-rssi">--</div><div class="stat-l">RSSI dBm</div></div>
+        <div><div class="stat-v" id="pulse-snr">--</div><div class="stat-l">SNR dB</div></div>
+      </div>
+    </div>
+    <div class="scroll" style="margin-top:12px">
+      <table>
+        <thead><tr><th>Time</th><th>Seq</th><th>Total</th><th>New</th><th>Watts</th><th>kWh</th><th>RSSI</th></tr></thead>
+        <tbody id="pulse-body"></tbody>
+      </table>
+    </div>
+  </div>
+
   <div class="card" id="readcard" data-pane="monitor" hidden>
     <div class="chart-head" style="margin-bottom:10px">
       <span class="chart-title">Meter readings received over LoRa</span>
@@ -452,9 +478,14 @@ function render(s) {
   // The signal panel must work in both modes. Walk-test pings and meter
   // readings are different messages on the same link, and each carries the
   // RSSI/SNR the gateway measured -- so whichever is arriving feeds the chart.
-  const meterMode = s.packets.length === 0 && rds.length > 0;
+  const pls = s.pulses || [];
+  // Pings, meter readings and pulse reports are all traffic on the same link,
+  // and each carries the RSSI/SNR the gateway measured. Whichever is arriving
+  // feeds the signal panel, so it is never blank while the link is working.
+  const alt = rds.length ? rds : pls;
+  const meterMode = s.packets.length === 0 && alt.length > 0;
   const pkts = meterMode
-    ? rds.map(r => ({ t: r.t, seq: r.seq, rssi: r.rssi, snr: r.snr,
+    ? alt.map(r => ({ t: r.t, seq: r.seq, rssi: r.rssi, snr: r.snr,
                       ferr: 0, vbat: r.vbat, missed: 0, pdr: null }))
     : s.packets;
   const last = meterMode ? (pkts[pkts.length - 1] || null) : s.last;
@@ -471,7 +502,7 @@ function render(s) {
   // Stale link detection: the camera node pings on a fixed interval, so silence
   // for much longer than that means the link dropped, not that it is idle.
   const since = last ? s.now - last.t : null;
-  const wake = (s.cfg && s.cfg.wake) ? s.cfg.wake : 12;
+  const wake = (s.cfg && s.cfg.wake) ? s.cfg.wake : (pls.length ? 60 : 12);
   // Allow one missed cycle plus camera/radio time before calling it lost.
   const staleAfter = Math.max(32, wake * 2.5 + 20);
   const stale = since !== null && since > staleAfter;
@@ -501,7 +532,7 @@ function render(s) {
     last ? `${meterMode ? 'last reading, wake' : 'last packet'} #${last.seq} · ${ago(since)}`
          : 'no packets yet';
 
-  document.getElementById('s-rx').textContent = meterMode ? rds.length : s.total_received;
+  document.getElementById('s-rx').textContent = meterMode ? alt.length : s.total_received;
   document.getElementById('s-miss').textContent = meterMode ? '--' : s.total_missed;
   document.getElementById('s-pdr').textContent = meterMode
     ? '--' : (s.pdr === null ? '--' : s.pdr.toFixed(0) + '%');
@@ -523,6 +554,7 @@ function render(s) {
      <td>${p.rssi}</td><td>${p.snr}</td><td>${p.ferr}</td><td>${p.missed}</td></tr>`).join('')
     || '<tr><td colspan="6" class="empty">Waiting for packets…</td></tr>';
 
+  renderPulses(s.pulses || [], s.now);
   renderReadings(s.readings || [], s.now);
   renderCamera(s.camera, s.ocr);
   renderSegs(s.segs, s.diag);
@@ -530,6 +562,32 @@ function render(s) {
 
   const radio = Object.values(s.radio)[0];
   document.getElementById('foot').textContent = radio ? radio.replace('[radio] ','') : 'waiting for a node…';
+}
+
+function renderPulses(ps, now) {
+  const card = document.getElementById('pulsecard');
+  if (!ps.length) { card.hidden = true; return; }
+  card.hidden = (activeTab !== 'monitor');
+  const last = ps[ps.length - 1];
+  // The meter counts 500 pulses per kWh, so one pulse is 2 Wh. The total is the
+  // measurement; watts is derived from the last interval and is advisory.
+  document.getElementById('pulse-kwh').innerHTML =
+    (last.kwh !== null ? last.kwh.toFixed(3) : '--') + '<span>kWh</span>';
+  document.getElementById('pulse-kwh').style.color = 'var(--good)';
+  document.getElementById('pulse-w').textContent =
+    last.watts !== null && last.watts !== undefined ? Math.round(last.watts) : '--';
+  document.getElementById('pulse-total').textContent = last.total;
+  document.getElementById('pulse-rssi').textContent = last.rssi.toFixed(0);
+  document.getElementById('pulse-snr').textContent = last.snr.toFixed(1);
+  document.getElementById('pulse-age').textContent =
+    `report #${last.seq} \u00b7 ${ago(now - last.t)} \u00b7 ${last.imp_kwh} imp/kWh`;
+  document.getElementById('pulse-sub').textContent = `${ps.length} reports`;
+  document.getElementById('pulse-body').innerHTML = ps.slice(-20).reverse().map(p =>
+    `<tr><td class="muted">${fmtClock(p.t)}</td><td>${p.seq}</td><td>${p.total}</td>
+     <td>${p.delta}</td>
+     <td>${p.watts !== null && p.watts !== undefined ? Math.round(p.watts) : '--'}</td>
+     <td>${p.kwh !== null ? p.kwh.toFixed(3) : '--'}</td>
+     <td>${p.rssi.toFixed(0)}</td></tr>`).join('');
 }
 
 function renderReadings(rs, now) {
