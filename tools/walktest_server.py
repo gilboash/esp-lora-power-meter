@@ -51,6 +51,16 @@ ROI_RE = re.compile(r"^\[roi\] min=(\d+) mean=(\d+) max=(\d+) contrast=(\d+) thr
                     r"trim=(\d+),(\d+) (\d+)x(\d+)(?: edge=(\d+))?$")
 SEG_RE = re.compile(r"^\[seg\] d(\d+):((?: [a-g]=\d+)+)\s+-> (.)$")
 # Emitted by the gateway for an optical pulse count from the pulse node.
+# The pulse node's own USB output. Worth parsing separately from the LoRa
+# reports: during installation you want to see counts the instant they happen,
+# without waiting for a transmission interval.
+PULSE_LOCAL_RE = re.compile(r"^\[pulse\] \+(\d+)\s+total=(\d+)\s+\(([\d.]+) kWh\)$")
+PULSE_CFG_RE = re.compile(r"^\[cfg\] total=(\d+) imp_kwh=(\d+) report=(\d+)s$")
+# "[tx] seq=1 total=14 delta=2 over 15s -> acked" -- distinct from the meter
+# node's "[tx] acked", and emitted every reporting interval whether or not
+# anything was counted, so it is the reliable way to spot this node.
+PULSE_TX_RE = re.compile(r"^\[tx\] seq=(\d+) total=(\d+) delta=(\d+) over (\d+)s -> (.+)$")
+PULSE_WARN_RE = re.compile(r"^\[warn\] (sensor saturated.*|.* implied - impossible.*)$")
 PULSE_RE = re.compile(r"^PULSE,(\d+),(\d+),(\d+),(\d+),(\d+),([-\d.]+),([-\d.]+),(\d+)$")
 READING_RE = re.compile(r"^READING,(\d+),(\d+),(\d+),(\d+),([-\d.]+),([-\d.]+),(\d+)(?:,(\d))?$")
 
@@ -77,6 +87,9 @@ class State:
         self.segs = {}           # digit index -> per-segment fill percentages
         self.readings = []       # decoded readings that arrived over LoRa
         self.pulses = []         # optical pulse counts from the pulse node
+        self.pulse_local = None  # what the pulse node reports over its own USB
+        self.pulse_cfg = None
+        self.pulse_warn = None
 
     def set_frame(self, jpeg, w, h, seq):
         with self.lock:
@@ -102,10 +115,10 @@ class State:
             "bytes": len(f["jpeg"]), "age": time.time() - f["t"],
         }
 
-    def send(self, command):
-        """Write a command line to the camera node, if it is connected."""
+    def send(self, command, to="camera"):
+        """Write a command line to one of the nodes, if it is connected."""
         with self.lock:
-            entry = self.serials.get("camera")
+            entry = self.serials.get(to)
         if not entry:
             return False
         ser, wlock = entry
@@ -140,6 +153,9 @@ class State:
                 "cfg": self.cfg,
                 "readings": self.readings[-60:],
                 "pulses": self.pulses[-120:],
+                "pulse_local": self.pulse_local,
+                "pulse_cfg": self.pulse_cfg,
+                "pulse_warn": self.pulse_warn,
             }
 
 
@@ -210,8 +226,8 @@ def reader(port):
                 STATE.ports[port] = {
                     "role": effective, "connected": True, "last": time.time()
                 }
-                if effective == "camera":
-                    STATE.serials["camera"] = (ser, wlock)
+                if effective in ("camera", "pulse"):
+                    STATE.serials[effective] = (ser, wlock)
 
         try:
             while True:
@@ -308,6 +324,46 @@ def reader(port):
                         role = "camera"
                         note_role(role)
                         continue
+                    m = PULSE_LOCAL_RE.match(line)
+                    if m:
+                        with STATE.lock:
+                            STATE.pulse_local = {
+                                "t": time.time(), "added": int(m.group(1)),
+                                "total": int(m.group(2)), "kwh": float(m.group(3)),
+                            }
+                        role = "pulse"; note_role(role)
+                        continue
+                    m = PULSE_TX_RE.match(line)
+                    if m:
+                        with STATE.lock:
+                            STATE.pulse_local = {
+                                "t": time.time(), "added": int(m.group(3)),
+                                "total": int(m.group(2)),
+                                "kwh": int(m.group(2)) / (
+                                    (STATE.pulse_cfg or {}).get("imp_kwh") or 500),
+                                "acked": m.group(5).strip() == "acked",
+                            }
+                        role = "pulse"; note_role(role)
+                        continue
+                    if line.startswith("[pcnt]"):
+                        role = "pulse"; note_role(role); continue
+                    m = PULSE_CFG_RE.match(line)
+                    if m:
+                        with STATE.lock:
+                            STATE.pulse_cfg = {
+                                "total": int(m.group(1)), "imp_kwh": int(m.group(2)),
+                                "report": int(m.group(3)),
+                            }
+                        role = "pulse"; note_role(role)
+                        continue
+                    m = PULSE_WARN_RE.match(line)
+                    if m:
+                        with STATE.lock:
+                            STATE.pulse_warn = {"t": time.time(), "text": m.group(1)}
+                        role = "pulse"; note_role(role)
+                        continue
+                    if "pulse node ::" in line:
+                        role = "pulse"; note_role(role); continue
                     m = PULSE_RE.match(line)
                     if m:
                         seq, total, delta, secs, imp = (int(m.group(i)) for i in range(1, 6))
@@ -517,7 +573,8 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError:
                 payload = {}
             cmd = str(payload.get("cmd", "")).strip()[:64]
-            ok = STATE.send(cmd) if cmd else False
+            to = str(payload.get("to", "camera")).strip() or "camera"
+            ok = STATE.send(cmd, to) if cmd else False
             self._send(200, json.dumps({"ok": ok}))
         elif self.path.startswith("/api/pause"):
             n = int(self.headers.get("Content-Length", "0"))

@@ -255,6 +255,12 @@ void loop() {
     pollCommandLines();
     const uint32_t now = millis();
 
+    // Re-announce periodically: the dashboard is usually started long after the
+    // node booted, and with a dark sensor there is otherwise nothing in the
+    // output for it to recognise this node by.
+    static uint32_t lastCfgPrint = 0;
+    if (Serial && now - lastCfgPrint > 10000) { lastCfgPrint = now; cfgPrint(); }
+
     // Drain the hardware counter often so a pulse shows up in the log promptly,
     // and so the count cannot approach the wrap limit between reports.
     static uint32_t lastSeenTotal = 0;

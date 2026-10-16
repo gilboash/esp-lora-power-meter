@@ -299,6 +299,18 @@
         <div><div class="stat-v" id="pulse-snr">--</div><div class="stat-l">SNR dB</div></div>
       </div>
     </div>
+    <div class="stat-l" id="pulse-live" style="margin-top:10px"></div>
+    <div class="stat-l" id="pulse-warn" style="margin-top:6px; color:var(--serious)" hidden></div>
+    <div class="ctrls" style="border-top:1px solid var(--border); padding-top:11px; margin-top:11px">
+      <span class="ctrl">Seed total
+        <input type="text" inputmode="numeric" class="num" id="p-total" placeholder="pulses"></span>
+      <span class="ctrl">imp/kWh
+        <input type="text" inputmode="numeric" class="num" id="p-imp" value="500"></span>
+      <span class="ctrl">Report s
+        <input type="text" inputmode="numeric" class="num" id="p-rep" value="60"></span>
+      <button class="primary" id="p-apply">Apply to node</button>
+      <button id="p-send">Send now</button>
+    </div>
     <div class="scroll" style="margin-top:12px">
       <table>
         <thead><tr><th>Time</th><th>Seq</th><th>Total</th><th>New</th><th>Watts</th><th>kWh</th><th>RSSI</th></tr></thead>
@@ -554,7 +566,7 @@ function render(s) {
      <td>${p.rssi}</td><td>${p.snr}</td><td>${p.ferr}</td><td>${p.missed}</td></tr>`).join('')
     || '<tr><td colspan="6" class="empty">Waiting for packets…</td></tr>';
 
-  renderPulses(s.pulses || [], s.now);
+  renderPulses(s.pulses || [], s.now, s.pulse_local, s.pulse_cfg, s.pulse_warn);
   renderReadings(s.readings || [], s.now);
   renderCamera(s.camera, s.ocr);
   renderSegs(s.segs, s.diag);
@@ -564,9 +576,36 @@ function render(s) {
   document.getElementById('foot').textContent = radio ? radio.replace('[radio] ','') : 'waiting for a node…';
 }
 
-function renderPulses(ps, now) {
+async function pulseCmd(cmd) {
+  await fetch('/api/camera', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ cmd, to: 'pulse' })
+  });
+}
+
+function renderPulses(ps, now, local, pcfg, warn) {
   const card = document.getElementById('pulsecard');
-  if (!ps.length) { card.hidden = true; return; }
+  // Show the card as soon as the node is on USB, even before the first LoRa
+  // report: during installation the local count is what you watch.
+  if (!ps.length && !local && !pcfg) { card.hidden = true; return; }
+  card.hidden = (activeTab !== 'monitor');
+
+  const liveEl = document.getElementById('pulse-live');
+  liveEl.textContent = local
+    ? `node counted ${local.total} pulses locally (${local.kwh.toFixed(3)} kWh), `
+      + `last +${local.added} ${ago(now - local.t)}`
+    : 'no local counts seen over USB';
+  const warnEl = document.getElementById('pulse-warn');
+  // Stray light is the failure mode here, and it inflates a cumulative total
+  // silently, so the node's own warning gets surfaced rather than buried.
+  if (warn && now - warn.t < 60) { warnEl.hidden = false; warnEl.textContent = '\u26a0 ' + warn.text; }
+  else warnEl.hidden = true;
+  if (pcfg && !pulseCfgAdopted) {
+    pulseCfgAdopted = true;
+    document.getElementById('p-imp').value = pcfg.imp_kwh;
+    document.getElementById('p-rep').value = pcfg.report;
+  }
+  if (!ps.length) return;
   card.hidden = (activeTab !== 'monitor');
   const last = ps[ps.length - 1];
   // The meter counts 500 pulses per kWh, so one pulse is 2 Wh. The total is the
@@ -665,6 +704,7 @@ function escapeHtml(x) {
 }
 
 let lastHadReadings = false;
+let pulseCfgAdopted = false;
 let roiBox = null;          // {x,y,w,h} in image pixels
 let imgW = 0, imgH = 0;
 let dragFrom = null;
@@ -833,6 +873,14 @@ async function setTab(name) {
 document.querySelectorAll('.tab').forEach(t => {
   t.onclick = () => setTab(t.dataset.tab);
 });
+
+document.getElementById('p-apply').onclick = async () => {
+  const t = document.getElementById('p-total').value.trim();
+  if (t !== '') await pulseCmd(`SET total ${parseInt(t) || 0}`);
+  await pulseCmd(`SET imp ${parseInt(document.getElementById('p-imp').value) || 500}`);
+  await pulseCmd(`SET report ${parseInt(document.getElementById('p-rep').value) || 60}`);
+};
+document.getElementById('p-send').onclick = () => pulseCmd('SEND');
 
 document.getElementById('testlink').onclick = async e => {
   const b = e.target;
